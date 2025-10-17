@@ -72,7 +72,9 @@ app.post('/api/v1/prompt-runs', async (req, reply) => {
       jobId: idem || undefined,
       attempts: 3,
       backoff: { type: 'exponential', delay: 2000 },
-      removeOnComplete: true,
+      // keep completed jobs so the GET can read them
+      removeOnComplete: { age: 600 },  // keep for 10 minutes
+      removeOnFail: { age: 86400 }     // keep failed for a day
     });
     return reply.send({ job_id: job.id });
   } else {
