@@ -5,7 +5,6 @@ import cors from '@fastify/cors';
 import { Queue } from 'bullmq';
 import jwt from 'jsonwebtoken';
 
-import { Queue } from 'bullmq';
 const queues = {
   chatgpt:     new Queue('prompt-chatgpt',     { connection: { host: process.env.REDIS_HOST, port: Number(process.env.REDIS_PORT||6379), password: process.env.REDIS_PASSWORD } }),
   perplexity:  new Queue('prompt-perplexity',  { connection: { host: process.env.REDIS_HOST, port: Number(process.env.REDIS_PORT||6379), password: process.env.REDIS_PASSWORD } }),
