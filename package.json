@@ -1,0 +1,15 @@
+{
+  "name": "ai-search-api",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "@fastify/cors": "^10.0.0",
+    "bullmq": "^5.0.0",
+    "fastify": "^5.0.0",
+    "jsonwebtoken": "^9.0.2"
+  }
+}
