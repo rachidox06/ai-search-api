@@ -1,52 +1,51 @@
-// index.js
+// ai-search-api/index.js  ← REPLACE YOUR FILE WITH THIS
+
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import { Queue } from 'bullmq';
 import jwt from 'jsonwebtoken';
-const payload = jwt.verify(token, SUPABASE_JWT_SECRET);
 
-// ---- ENV ----
 const {
   PORT = 4000,
   CORS_ORIGINS = 'http://localhost:8501',
   REDIS_HOST,
   REDIS_PORT = 6379,
   REDIS_PASSWORD,
-  SUPABASE_JWT_SECRET, // optional for now
-  SKIP_AUTH = 'true',  // set to 'false' in prod once JWT is wired
+  SUPABASE_JWT_SECRET,
+  SKIP_AUTH = 'true',
 } = process.env;
 
-// ---- APP ----
 const app = Fastify({ logger: true });
 
 // CORS
 await app.register(cors, {
   origin: (origin, cb) => {
-    if (!origin) return cb(null, true); // allow curl / health checks
+    if (!origin) return cb(null, true);
     const allowed = CORS_ORIGINS.split(',').map(s => s.trim());
     cb(null, allowed.includes(origin));
   },
   credentials: true,
 });
 
-// Auth (very light for now)
+// ↓↓↓ THIS IS THE AUTH HOOK YOU ASKED ABOUT ↓↓↓
 app.addHook('preHandler', async (req, res) => {
   if (req.routerPath?.startsWith('/health') || req.routerPath?.startsWith('/ready')) return;
-  if (SKIP_AUTH === 'true') return; // dev mode: no auth
+  if (SKIP_AUTH === 'true') return; // keep true while testing
 
   const auth = req.headers.authorization || '';
   const token = auth.startsWith('Bearer ') ? auth.slice(7) : '';
   if (!token) return res.code(401).send({ error: 'unauthorized' });
 
   try {
-    const payload = verify(token, SUPABASE_JWT_SECRET);
+    const payload = jwt.verify(token, SUPABASE_JWT_SECRET);
     req.user = { sub: payload.sub, email: payload.email };
   } catch {
     return res.code(401).send({ error: 'invalid_token' });
   }
 });
+// ↑↑↑ END AUTH HOOK ↑↑↑
 
-// Redis jobs queue (you’ll connect Redis in Railway; for now this can be undefined)
+// Queue (optional for now; uses Redis if set)
 let jobQueue = null;
 if (REDIS_HOST) {
   jobQueue = new Queue('prompt-runs', {
@@ -54,19 +53,18 @@ if (REDIS_HOST) {
   });
 }
 
-// Health endpoints
+// In-memory fallback jobs (when no Redis/worker)
+const memJobs = new Map();
+
+// Routes
 app.get('/health', async () => ({ ok: true }));
 app.get('/ready', async () => ({ ok: true }));
 
-// Minimal in-memory fallback if Redis isn’t set yet
-const memJobs = new Map();
-
-// POST create a job
 app.post('/api/v1/prompt-runs', async (req, reply) => {
   const { prompt, engine = 'chatgpt', locale = 'en', persona = 'default' } = req.body || {};
   if (!prompt) return reply.code(400).send({ error: 'prompt is required' });
 
-  const idem = req.headers['idempotency-key']; // optional
+  const idem = req.headers['idempotency-key'];
   const payload = { prompt, engine, locale, persona, created_at: Date.now() };
 
   if (jobQueue) {
@@ -78,7 +76,6 @@ app.post('/api/v1/prompt-runs', async (req, reply) => {
     });
     return reply.send({ job_id: job.id });
   } else {
-    // local fallback
     const id = String(Date.now());
     memJobs.set(id, { status: 'running' });
     setTimeout(() => {
@@ -95,7 +92,6 @@ app.post('/api/v1/prompt-runs', async (req, reply) => {
   }
 });
 
-// GET job status/result
 app.get('/api/v1/prompt-runs/:id', async (req, reply) => {
   const { id } = req.params;
   if (jobQueue) {
