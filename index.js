@@ -114,6 +114,11 @@ app.post('/api/v1/prompt-runs', async (req, reply) => {
           error.code === 'ETIMEDOUT') {
         return reply.code(503).send({ error: 'redis_unavailable' });
       }
+      // BullMQ validation errors (like invalid jobId) - return 400 Bad Request
+      if (error.message?.includes('Custom Id cannot contain') ||
+          error.message?.includes('Invalid jobId')) {
+        return reply.code(400).send({ error: 'invalid_idempotency_key' });
+      }
       // Other queue errors - re-throw as 500
       throw error;
     }
@@ -186,8 +191,10 @@ app.post('/api/v1/prompt-runs/batch', async (req, reply) => {
     if (!q) return reply.code(400).send({ error: `unsupported engine: ${eng}` });
 
     try {
+      // Create unique jobId by replacing colons with dashes
+      const sanitizedIdem = idem.replace(/:/g, '-');
       const job = await q.add('run', { prompt, engine: eng, locale, group_id }, {
-        jobId: idem ? `${idem}:${eng}` : undefined,
+        jobId: idem ? `${sanitizedIdem}-${eng}` : undefined,
         attempts: 3,
         backoff: { type: 'exponential', delay: 2000 },
         removeOnComplete: { age: 600 },
@@ -205,6 +212,11 @@ app.post('/api/v1/prompt-runs/batch', async (req, reply) => {
           error.code === 'ENOTFOUND' ||
           error.code === 'ETIMEDOUT') {
         return reply.code(503).send({ error: 'redis_unavailable' });
+      }
+      // BullMQ validation errors (like invalid jobId) - return 400 Bad Request
+      if (error.message?.includes('Custom Id cannot contain') ||
+          error.message?.includes('Invalid jobId')) {
+        return reply.code(400).send({ error: 'invalid_idempotency_key' });
       }
       // Other queue errors - re-throw as 500
       throw error;
@@ -271,6 +283,9 @@ app.get('/api/v1/sse/groups/:groupId', async (req, reply) => {
             error.code === 'ENOTFOUND' ||
             error.code === 'ETIMEDOUT') {
           emit('error', { engine: eng, error: 'redis_unavailable' });
+        } else if (error.message?.includes('Custom Id cannot contain') ||
+                   error.message?.includes('Invalid jobId')) {
+          emit('error', { engine: eng, error: 'invalid_job_id' });
         } else {
           // Other queue errors
           emit('error', { engine: eng, error: 'queue_error' });
