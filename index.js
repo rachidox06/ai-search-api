@@ -78,14 +78,25 @@ app.post('/api/v1/prompt-runs', async (req, reply) => {
     const q = queues[engine];
     if (!q) return reply.code(400).send({ error: `unsupported engine: ${engine}` });
 
-    const job = await q.add('run', payload, {
-      jobId: idem || undefined,
-      attempts: 3,
-      backoff: { type: 'exponential', delay: 2000 },
-      removeOnComplete: { age: 600 },  // keep 10m so clients can read
-      removeOnFail: { age: 86400 },
-    });
-    return reply.send({ job_id: job.id });
+    try {
+      const job = await q.add('run', payload, {
+        jobId: idem || undefined,
+        attempts: 3,
+        backoff: { type: 'exponential', delay: 2000 },
+        removeOnComplete: { age: 600 },  // keep 10m so clients can read
+        removeOnFail: { age: 86400 },
+      });
+      return reply.send({ job_id: job.id });
+    } catch (error) {
+      // Redis connection failure - return 503 Service Unavailable
+      if (error.message?.includes('ECONNREFUSED') ||
+          error.message?.includes('Redis connection') ||
+          error.code === 'ECONNREFUSED') {
+        return reply.code(503).send({ error: 'redis_unavailable' });
+      }
+      // Other queue errors - re-throw as 500
+      throw error;
+    }
   }
 
   // No Redis: mock fallback
@@ -109,16 +120,27 @@ app.get('/api/v1/prompt-runs/:id', async (req, reply) => {
 
   if (hasRedis) {
     for (const q of Object.values(queues)) {
-      const job = await q.getJob(id);
-      if (!job) continue;
-      const st = await job.getState(); // waiting|active|delayed|completed|failed
-      if (st === 'completed') {
-        return reply.send({ status: 'done', result: await job.returnvalue });
+      try {
+        const job = await q.getJob(id);
+        if (!job) continue;
+        const st = await job.getState(); // waiting|active|delayed|completed|failed
+        if (st === 'completed') {
+          return reply.send({ status: 'done', result: await job.returnvalue });
+        }
+        if (st === 'failed') {
+          return reply.send({ status: 'error', error: job.failedReason });
+        }
+        return reply.send({ status: st });
+      } catch (error) {
+        // Redis connection failure - return 503 Service Unavailable
+        if (error.message?.includes('ECONNREFUSED') ||
+            error.message?.includes('Redis connection') ||
+            error.code === 'ECONNREFUSED') {
+          return reply.code(503).send({ error: 'redis_unavailable' });
+        }
+        // Other queue errors - re-throw as 500
+        throw error;
       }
-      if (st === 'failed') {
-        return reply.send({ status: 'error', error: job.failedReason });
-      }
-      return reply.send({ status: st });
     }
     return reply.code(404).send({ error: 'not_found' });
   }
@@ -142,14 +164,26 @@ app.post('/api/v1/prompt-runs/batch', async (req, reply) => {
   for (const eng of engines) {
     const q = queues[eng];
     if (!q) return reply.code(400).send({ error: `unsupported engine: ${eng}` });
-    const job = await q.add('run', { prompt, engine: eng, locale, group_id }, {
-      jobId: idem ? `${idem}:${eng}` : undefined,
-      attempts: 3,
-      backoff: { type: 'exponential', delay: 2000 },
-      removeOnComplete: { age: 600 },
-      removeOnFail: { age: 86400 },
-    });
-    job_ids[eng] = job.id;
+
+    try {
+      const job = await q.add('run', { prompt, engine: eng, locale, group_id }, {
+        jobId: idem ? `${idem}:${eng}` : undefined,
+        attempts: 3,
+        backoff: { type: 'exponential', delay: 2000 },
+        removeOnComplete: { age: 600 },
+        removeOnFail: { age: 86400 },
+      });
+      job_ids[eng] = job.id;
+    } catch (error) {
+      // Redis connection failure - return 503 Service Unavailable
+      if (error.message?.includes('ECONNREFUSED') ||
+          error.message?.includes('Redis connection') ||
+          error.code === 'ECONNREFUSED') {
+        return reply.code(503).send({ error: 'redis_unavailable' });
+      }
+      // Other queue errors - re-throw as 500
+      throw error;
+    }
   }
 
   return reply.send({ group_id, job_ids });
@@ -185,19 +219,32 @@ app.get('/api/v1/sse/groups/:groupId', async (req, reply) => {
     for (const { eng, id } of targets) {
       const q = queues[eng];
       if (!q) continue;
-      const job = await q.getJob(id);
-      if (!job) continue;
-      const st = await job.getState();
-      if (last.get(eng) === st) continue;
-      last.set(eng, st);
 
-      if (st === 'completed') {
-        const res = await job.returnvalue;
-        emit('completed', { engine: eng, result: res });
-      } else if (st === 'failed') {
-        emit('failed', { engine: eng, error: job.failedReason || 'failed' });
-      } else {
-        emit('progress', { engine: eng, status: st });
+      try {
+        const job = await q.getJob(id);
+        if (!job) continue;
+        const st = await job.getState();
+        if (last.get(eng) === st) continue;
+        last.set(eng, st);
+
+        if (st === 'completed') {
+          const res = await job.returnvalue;
+          emit('completed', { engine: eng, result: res });
+        } else if (st === 'failed') {
+          emit('failed', { engine: eng, error: job.failedReason || 'failed' });
+        } else {
+          emit('progress', { engine: eng, status: st });
+        }
+      } catch (error) {
+        // Redis connection failure - emit error and potentially close
+        if (error.message?.includes('ECONNREFUSED') ||
+            error.message?.includes('Redis connection') ||
+            error.code === 'ECONNREFUSED') {
+          emit('error', { engine: eng, error: 'redis_unavailable' });
+        } else {
+          // Other queue errors
+          emit('error', { engine: eng, error: 'queue_error' });
+        }
       }
     }
   }, 1000);
