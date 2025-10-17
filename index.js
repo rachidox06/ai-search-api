@@ -21,8 +21,23 @@ const connection = hasRedis
   ? { host: REDIS_HOST, port: Number(REDIS_PORT), password: REDIS_PASSWORD }
   : null;
 
+// Test Redis connectivity on startup
+let redisAvailable = false;
+if (hasRedis) {
+  try {
+    const testQueue = new BullQueue('test-connection', { connection });
+    await testQueue.add('test', { test: true });
+    await testQueue.close();
+    redisAvailable = true;
+    console.log('Redis connection successful');
+  } catch (error) {
+    console.error('Redis connection failed on startup:', error.message);
+    redisAvailable = false;
+  }
+}
+
 // Per-engine queues (must match worker queue names)
-const queues = hasRedis
+const queues = redisAvailable
   ? {
       chatgpt:    new BullQueue('prompt-chatgpt',    { connection }),
       perplexity: new BullQueue('prompt-perplexity', { connection }),
@@ -74,7 +89,7 @@ app.post('/api/v1/prompt-runs', async (req, reply) => {
   const payload = { prompt, engine, locale, persona, created_at: Date.now() };
 
   // With Redis: push to the engine's queue
-  if (hasRedis) {
+  if (redisAvailable) {
     const q = queues[engine];
     if (!q) return reply.code(400).send({ error: `unsupported engine: ${engine}` });
 
@@ -88,10 +103,15 @@ app.post('/api/v1/prompt-runs', async (req, reply) => {
       });
       return reply.send({ job_id: job.id });
     } catch (error) {
+      console.error('Queue error:', error.message, error.code, error.name);
       // Redis connection failure - return 503 Service Unavailable
       if (error.message?.includes('ECONNREFUSED') ||
           error.message?.includes('Redis connection') ||
-          error.code === 'ECONNREFUSED') {
+          error.message?.includes('getaddrinfo ENOTFOUND') ||
+          error.message?.includes('Connection timed out') ||
+          error.code === 'ECONNREFUSED' ||
+          error.code === 'ENOTFOUND' ||
+          error.code === 'ETIMEDOUT') {
         return reply.code(503).send({ error: 'redis_unavailable' });
       }
       // Other queue errors - re-throw as 500
@@ -118,7 +138,7 @@ app.post('/api/v1/prompt-runs', async (req, reply) => {
 app.get('/api/v1/prompt-runs/:id', async (req, reply) => {
   const { id } = req.params;
 
-  if (hasRedis) {
+  if (redisAvailable) {
     for (const q of Object.values(queues)) {
       try {
         const job = await q.getJob(id);
@@ -155,7 +175,7 @@ app.post('/api/v1/prompt-runs/batch', async (req, reply) => {
   if (!prompt || !Array.isArray(engines) || engines.length === 0) {
     return reply.code(400).send({ error: 'prompt and engines[] are required' });
   }
-  if (!hasRedis) return reply.code(503).send({ error: 'redis_unavailable' });
+  if (!redisAvailable) return reply.code(503).send({ error: 'redis_unavailable' });
 
   const idem = (req.headers['idempotency-key'] || '').toString().trim();
   const group_id = randomUUID();
@@ -175,10 +195,15 @@ app.post('/api/v1/prompt-runs/batch', async (req, reply) => {
       });
       job_ids[eng] = job.id;
     } catch (error) {
+      console.error('Queue error:', error.message, error.code, error.name);
       // Redis connection failure - return 503 Service Unavailable
       if (error.message?.includes('ECONNREFUSED') ||
           error.message?.includes('Redis connection') ||
-          error.code === 'ECONNREFUSED') {
+          error.message?.includes('getaddrinfo ENOTFOUND') ||
+          error.message?.includes('Connection timed out') ||
+          error.code === 'ECONNREFUSED' ||
+          error.code === 'ENOTFOUND' ||
+          error.code === 'ETIMEDOUT') {
         return reply.code(503).send({ error: 'redis_unavailable' });
       }
       // Other queue errors - re-throw as 500
@@ -236,10 +261,15 @@ app.get('/api/v1/sse/groups/:groupId', async (req, reply) => {
           emit('progress', { engine: eng, status: st });
         }
       } catch (error) {
+        console.error('SSE Queue error:', error.message, error.code, error.name);
         // Redis connection failure - emit error and potentially close
         if (error.message?.includes('ECONNREFUSED') ||
             error.message?.includes('Redis connection') ||
-            error.code === 'ECONNREFUSED') {
+            error.message?.includes('getaddrinfo ENOTFOUND') ||
+            error.message?.includes('Connection timed out') ||
+            error.code === 'ECONNREFUSED' ||
+            error.code === 'ENOTFOUND' ||
+            error.code === 'ETIMEDOUT') {
           emit('error', { engine: eng, error: 'redis_unavailable' });
         } else {
           // Other queue errors
