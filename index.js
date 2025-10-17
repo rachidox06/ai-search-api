@@ -2,7 +2,8 @@
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import { Queue } from 'bullmq';
-import { verify } from 'jsonwebtoken';
+import jwt from 'jsonwebtoken';
+const payload = jwt.verify(token, SUPABASE_JWT_SECRET);
 
 // ---- ENV ----
 const {
