@@ -12,7 +12,7 @@ async function queryGemini(prompt) {
   const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
   const model = genAI.getGenerativeModel({
     model: 'gemini-2.0-flash-exp',
-    tools: [{ googleSearchRetrieval: {} }]
+    tools: [{ google_search: {} }]
   });
 
   const result = await model.generateContent(prompt);
