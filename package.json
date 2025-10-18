@@ -3,16 +3,18 @@
   "version": "0.1.0",
   "type": "module",
   "main": "index.js",
-  "engines": { "node": ">=20 <23" },
+  "engines": {
+    "node": ">=20 <23"
+  },
   "scripts": {
     "start": "node index.js",
     "start:worker": "node worker.js"
   },
   "dependencies": {
-    "fastify": "^5.0.0",
     "@fastify/cors": "^11.1.0",
+    "@google/generative-ai": "^0.24.1",
     "bullmq": "^5.8.1",
+    "fastify": "^5.0.0",
     "jsonwebtoken": "^9.0.2"
   }
-  
 }
