@@ -33,27 +33,83 @@ async function queryGemini(prompt) {
   const text = response.text();
   const groundingMetadata = response.candidates?.[0]?.groundingMetadata;
 
+  // Process grounding data to create enhanced response with hyperlinks
+  let enhancedText = text;
+  const citations = [];
+  const sources = [];
+
+  if (groundingMetadata?.groundingSupports && groundingMetadata?.groundingChunks) {
+    // Sort supports by startIndex in reverse order to avoid index shifting
+    const sortedSupports = [...groundingMetadata.groundingSupports]
+      .sort((a, b) => b.segment.startIndex - a.segment.startIndex);
+
+    // Process each grounding support to add hyperlinks
+    sortedSupports.forEach((support, index) => {
+      const chunkIndex = support.groundingChunkIndices[0]; // Use first chunk
+      const chunk = groundingMetadata.groundingChunks[chunkIndex];
+
+      if (chunk?.web) {
+        const citationNumber = index + 1;
+        const hyperlinkText = `${support.segment.text} [${citationNumber}]`;
+
+        // Replace the segment text with hyperlinked version
+        const start = support.segment.startIndex;
+        const end = support.segment.endIndex;
+        enhancedText = enhancedText.substring(0, start) + hyperlinkText + enhancedText.substring(end);
+
+        // Add to citations array
+        citations.push({
+          number: citationNumber,
+          url: chunk.web.uri,
+          title: chunk.web.title || 'Source',
+          text: support.segment.text
+        });
+
+        // Add to sources if not already present
+        if (!sources.find(s => s.url === chunk.web.uri)) {
+          sources.push({
+            url: chunk.web.uri,
+            title: chunk.web.title || 'Source'
+          });
+        }
+      }
+    });
+  }
+
   return {
-    text: text,
+    text: enhancedText,
+    originalText: text,
     groundingMetadata: groundingMetadata,
-    sources: groundingMetadata?.groundingSupports?.map(support => ({
-      uri: support.uri,
-      title: support.title,
-      segment: support.segment
-    })) || []
+    citations: citations,
+    sources: sources,
+    searchQueries: groundingMetadata?.webSearchQueries || []
   };
 }
 
 async function runJob({prompt, locale='US'}) {
   const result = await queryGemini(prompt);
 
+  // Create a formatted response with citations
+  let formattedAnswer = result.enhancedText || result.text;
+
+  // Add citations section if we have citations
+  if (result.citations && result.citations.length > 0) {
+    formattedAnswer += '\n\n## Sources:\n';
+    result.citations.forEach(citation => {
+      formattedAnswer += `${citation.number}. [${citation.title}](${citation.url})\n`;
+    });
+  }
+
   return {
     engine: 'gemini',
     provider: 'google',
-    answer: result.text,
+    answer: formattedAnswer,
+    enhanced_answer: result.enhancedText,
+    original_answer: result.originalText,
     raw: result,
     search_results: result.sources || [],
-    citations: result.sources || []
+    citations: result.citations || [],
+    search_queries: result.searchQueries || []
   };
 }
 
