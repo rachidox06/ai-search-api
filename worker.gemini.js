@@ -11,9 +11,9 @@ async function queryGemini(prompt) {
 
   const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
 
-  // Use gemini-1.5-pro for better search capabilities and citations
+  // Use gemini-2.5-flash for search capabilities and citations
   const model = genAI.getGenerativeModel({
-    model: 'gemini-1.5-pro',
+    model: 'gemini-2.5-flash',
     generationConfig: {
       temperature: 0.1,  // Lower temperature for more factual responses
       topP: 0.8,
@@ -21,9 +21,7 @@ async function queryGemini(prompt) {
       maxOutputTokens: 4096,  // Allow longer responses
     },
     tools: [{
-      google_search: {
-        // Enable search with grounding
-      }
+      google_search: {}
     }],
     systemInstruction: "You are a helpful AI assistant with access to Google Search. When answering questions, provide comprehensive, well-researched answers with specific facts, data, and citations from reliable sources. Include links to your sources whenever possible. Be thorough but concise."
   });
