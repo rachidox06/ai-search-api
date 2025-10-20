@@ -89,7 +89,10 @@ async function queryGemini(prompt) {
 }
 
 async function runJob({prompt, locale='US', user_id, session_id}) {
+  console.log('🚀 Gemini job started:', { prompt: prompt.substring(0, 50) + '...', locale, has_user_id: !!user_id, has_session_id: !!session_id });
+  
   const result = await queryGemini(prompt);
+  console.log('✅ Gemini API response received:', { citations_count: result.citations?.length || 0 });
 
   // Create a formatted response with citations
   let formattedAnswer = result.enhancedText || result.text;
@@ -115,8 +118,14 @@ async function runJob({prompt, locale='US', user_id, session_id}) {
   };
 
   // Normalize and persist to Supabase
-  const normalized = normalizeGemini({ prompt, user_id, session_id }, payload);
-  await savePromptRun(normalized);
+  try {
+    const normalized = normalizeGemini({ prompt, user_id, session_id }, payload);
+    await savePromptRun(normalized);
+    console.log('💾 Data persisted to Supabase');
+  } catch (error) {
+    console.error('❌ Failed to persist to Supabase:', error.message);
+    // Don't throw - still return the result even if persistence fails
+  }
 
   return payload;
 }

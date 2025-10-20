@@ -62,11 +62,14 @@ function extractAnswer(dataforseoResponse) {
 }
 
 async function runJob({ prompt, locale = 'US', user_id, session_id }) {
+  console.log('🚀 ChatGPT job started:', { prompt: prompt.substring(0, 50) + '...', locale, has_user_id: !!user_id, has_session_id: !!session_id });
+  
   if (!DATAFORSEO_USERNAME) throw new Error('Missing DATAFORSEO_USERNAME');
   if (!DATAFORSEO_PASSWORD) throw new Error('Missing DATAFORSEO_PASSWORD');
 
   const dataforseoResponse = await queryDataForSEOChatGPT(prompt, locale);
   const answer = extractAnswer(dataforseoResponse);
+  console.log('✅ DataForSEO ChatGPT API response received');
 
   const payload = {
     engine: 'chatgpt',
@@ -77,8 +80,13 @@ async function runJob({ prompt, locale = 'US', user_id, session_id }) {
   };
 
   // Normalize and persist to Supabase
-  const normalized = normalizeDataforseoChatGPT({ prompt, user_id, session_id }, payload);
-  await savePromptRun(normalized);
+  try {
+    const normalized = normalizeDataforseoChatGPT({ prompt, user_id, session_id }, payload);
+    await savePromptRun(normalized);
+    console.log('💾 Data persisted to Supabase');
+  } catch (error) {
+    console.error('❌ Failed to persist to Supabase:', error.message);
+  }
 
   return payload;
 }

@@ -12,7 +12,7 @@ export function normalizeGemini(jobCtx, gemini) {
     id: c.number ?? i + 1, title: c.title, url: c.url, label: host(c.url), source: host(c.url), snippet: c.text
   }));
   return {
-    user_id: jobCtx.user_id, session_id: jobCtx.session_id, prompt_text: jobCtx.prompt,
+    user_id: jobCtx.user_id ?? null, session_id: jobCtx.session_id ?? null, prompt_text: jobCtx.prompt,
     provider: 'google', engine: 'gemini', model: 'gemini-2.5-flash',
     status: 'done',
     content_format: 'markdown',
@@ -46,7 +46,7 @@ export function normalizeDataforseoGoogle(jobCtx, dfs) {
   } : null;
 
   return {
-    user_id: jobCtx.user_id, session_id: jobCtx.session_id, prompt_text: jobCtx.prompt,
+    user_id: jobCtx.user_id ?? null, session_id: jobCtx.session_id ?? null, prompt_text: jobCtx.prompt,
     provider: 'dataforseo', engine: 'google',
     request_id: task?.id,
     status: 'done',
@@ -70,7 +70,7 @@ export function normalizePerplexity(jobCtx, px) {
     url:r.url, title:r.title, label:host(r.url), snippet:r.snippet
   }));
   return {
-    user_id: jobCtx.user_id, session_id: jobCtx.session_id, prompt_text: jobCtx.prompt,
+    user_id: jobCtx.user_id ?? null, session_id: jobCtx.session_id ?? null, prompt_text: jobCtx.prompt,
     provider: 'perplexity', engine: 'perplexity', model: raw.model,
     request_id: raw.id,
     status: 'done',
@@ -91,7 +91,7 @@ export function normalizeDataforseoChatGPT(jobCtx, dfs) {
   const top  = task?.result?.[0];
   const item = top?.items?.[0];
   return {
-    user_id: jobCtx.user_id, session_id: jobCtx.session_id, prompt_text: jobCtx.prompt,
+    user_id: jobCtx.user_id ?? null, session_id: jobCtx.session_id ?? null, prompt_text: jobCtx.prompt,
     provider: 'dataforseo', engine: 'chatgpt', model: top?.model,
     request_id: task?.id,
     status: 'done',

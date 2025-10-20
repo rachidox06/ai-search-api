@@ -1,6 +1,21 @@
 import { createClient } from '@supabase/supabase-js';
 
-const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
+const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = process.env;
+
+// Validate environment variables
+if (!SUPABASE_URL) {
+  console.error('❌ SUPABASE_URL is not set in environment variables');
+  console.error('Available env vars:', Object.keys(process.env).filter(k => k.includes('SUPABASE')).join(', ') || 'none with SUPABASE');
+  throw new Error('SUPABASE_URL environment variable is required');
+}
+
+if (!SUPABASE_SERVICE_ROLE_KEY) {
+  console.error('❌ SUPABASE_SERVICE_ROLE_KEY is not set in environment variables');
+  throw new Error('SUPABASE_SERVICE_ROLE_KEY environment variable is required');
+}
+
+const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+console.log('✅ Supabase client initialized successfully');
 
 export async function savePromptRun(row) {
   const body = {
@@ -35,10 +50,23 @@ export async function savePromptRun(row) {
     extra: row.extra ?? null
   };
 
+  console.log('📝 Saving to Supabase:', {
+    provider: body.provider,
+    engine: body.engine,
+    prompt: body.prompt_text?.substring(0, 50) + '...',
+    has_answer: !!body.answer_markdown,
+    citations_count: body.citations?.length || 0
+  });
+
   const { data, error } = await supabase
     .from('prompt_runs')
     .upsert(body, { onConflict: 'provider,request_id' });
 
-  if (error) throw error;
+  if (error) {
+    console.error('❌ Supabase save failed:', error);
+    throw error;
+  }
+  
+  console.log('✅ Saved to Supabase successfully');
   return data?.[0];
 }

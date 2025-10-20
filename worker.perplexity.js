@@ -55,8 +55,11 @@ function extractAnswer(perplexityResponse) {
 }
 
 async function runJob({prompt, locale='US', user_id, session_id}){
+  console.log('🚀 Perplexity job started:', { prompt: prompt.substring(0, 50) + '...', locale, has_user_id: !!user_id, has_session_id: !!session_id });
+  
   const perplexityResponse = await queryPerplexity(prompt);
   const answer = extractAnswer(perplexityResponse);
+  console.log('✅ Perplexity API response received');
 
   const payload = {
     engine: 'perplexity',
@@ -68,8 +71,13 @@ async function runJob({prompt, locale='US', user_id, session_id}){
   };
 
   // Normalize and persist to Supabase
-  const normalized = normalizePerplexity({ prompt, user_id, session_id }, payload);
-  await savePromptRun(normalized);
+  try {
+    const normalized = normalizePerplexity({ prompt, user_id, session_id }, payload);
+    await savePromptRun(normalized);
+    console.log('💾 Data persisted to Supabase');
+  } catch (error) {
+    console.error('❌ Failed to persist to Supabase:', error.message);
+  }
 
   return payload;
 }
