@@ -84,3 +84,4 @@ async function runJob({prompt, locale='US', user_id, session_id}){
 
 new Worker('prompt-perplexity', async job=>runJob(job.data), { connection:{ host:REDIS_HOST, port:Number(REDIS_PORT), password:REDIS_PASSWORD }});
 console.log('worker.perplexity started (Perplexity API)');
+# Trigger redeploy
