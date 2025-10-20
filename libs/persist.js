@@ -55,18 +55,22 @@ export async function savePromptRun(row) {
     engine: body.engine,
     prompt: body.prompt_text?.substring(0, 50) + '...',
     has_answer: !!body.answer_markdown,
-    citations_count: body.citations?.length || 0
+    citations_count: body.citations?.length || 0,
+    has_request_id: !!body.request_id
   });
 
+  // Use insert instead of upsert since some providers (like Gemini) don't have request_id
+  // If request_id exists and is duplicate, it will fail gracefully
   const { data, error } = await supabase
     .from('prompt_runs')
-    .upsert(body, { onConflict: 'provider,request_id' });
+    .insert(body)
+    .select();
 
   if (error) {
     console.error('❌ Supabase save failed:', error);
     throw error;
   }
   
-  console.log('✅ Saved to Supabase successfully');
+  console.log('✅ Saved to Supabase successfully, id:', data?.[0]?.id);
   return data?.[0];
 }
