@@ -90,4 +90,3 @@ async function runJob({prompt, locale='US', user_id, session_id}){
 }
 new Worker('prompt-google', async job=>runJob(job.data), { connection:{ host:REDIS_HOST, port:Number(REDIS_PORT), password:REDIS_PASSWORD }});
 console.log('worker.google started (DataForSEO)');
-# Trigger redeploy
