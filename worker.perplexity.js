@@ -1,6 +1,6 @@
 import { Worker } from 'bullmq';
-import { normalizeResponse, normalizePerplexity } from './libs/normalize.js';
-import { saveTrackingResult, savePromptRun } from './libs/persist.js';
+import { normalizeResponse } from './libs/normalize.js';
+import { saveTrackingResult } from './libs/persist.js';
 
 const { REDIS_HOST, REDIS_PORT = 6379, REDIS_PASSWORD, PERPLEXITY_API_KEY } = process.env;
 
@@ -56,99 +56,66 @@ function extractAnswer(perplexityResponse) {
 
 async function runJob(jobData){
   const {
-    prompt_id,
-    prompt_text,
+    prompt_id,       // REQUIRED: UUID from Next.js
+    prompt_text,     // REQUIRED: The actual prompt
     locale = 'US',
     engine = 'perplexity',
     website_id,
-    website_domain,
+    website_domain,  // REQUIRED: for brand tracking
     brand_name,
     brand_aliases,
-    // Legacy
-    prompt,
-    user_id,
-    session_id
+    user_id
   } = jobData;
-
-  const actualPrompt = prompt_text || prompt;
 
   console.log(`🚀 ${engine} job started:`, { 
     prompt_id, 
-    prompt: actualPrompt?.substring(0, 50) + '...',
+    prompt: prompt_text?.substring(0, 50) + '...',
     locale,
     website_domain
   });
   
-  // 1. Call Perplexity API (currently via DataForSEO or direct)
-  const perplexityResponse = await queryPerplexity(actualPrompt);
+  if (!prompt_id || !website_domain) {
+    throw new Error('prompt_id and website_domain are required for tracking');
+  }
+  
+  // 1. Call Perplexity API
+  const perplexityResponse = await queryPerplexity(prompt_text);
   console.log('✅ Perplexity API response received');
 
-  // NEW FLOW: For tracking with brand context
-  if (prompt_id && website_domain) {
-    try {
-      // Convert to DataForSEO format if needed
-      const dataforseoFormat = perplexityResponse.tasks ? perplexityResponse : {
-        tasks: [{
-          cost: perplexityResponse.usage?.cost?.total_cost || 0,
-          result: [{
-            text: extractAnswer(perplexityResponse),
-            items: perplexityResponse.items,
-            annotations: perplexityResponse.annotations,
-            model: perplexityResponse.model
-          }]
-        }]
-      };
-
-      // 2. Normalize with brand analysis
-      const normalized = normalizeResponse(
-        'perplexity',
-        dataforseoFormat,
-        { website_domain, brand_name, brand_aliases },
-        { locale }
-      );
-      
-      // 3. Save to tracking table
-      const saved = await saveTrackingResult(prompt_id, normalized);
-      console.log('✅ Tracking result saved:', saved.id);
-      
-      // 4. Return result
-      return {
-        success: true,
-        result_id: saved.id,
-        engine: 'perplexity',
-        was_mentioned: normalized.was_mentioned,
-        sentiment: normalized.sentiment,
-        ranking_position: normalized.ranking_position
-      };
-    } catch (error) {
-      console.error('❌ Failed to save tracking result:', error.message);
-      throw error;
-    }
-  }
-
-  // LEGACY FLOW
-  const answer = extractAnswer(perplexityResponse);
-  const payload = {
-    engine: 'perplexity',
-    provider: 'perplexity',
-    answer,
-    raw: perplexityResponse,
-    search_results: perplexityResponse.search_results || [],
-    usage: perplexityResponse.usage || {}
+  // Convert to DataForSEO format if needed
+  const dataforseoFormat = perplexityResponse.tasks ? perplexityResponse : {
+    tasks: [{
+      cost: perplexityResponse.usage?.cost?.total_cost || 0,
+      result: [{
+        text: extractAnswer(perplexityResponse),
+        items: perplexityResponse.items,
+        annotations: perplexityResponse.annotations,
+        model: perplexityResponse.model
+      }]
+    }]
   };
 
-  try {
-    const normalized = normalizePerplexity(
-      { prompt: actualPrompt, user_id, session_id }, 
-      payload
-    );
-    await savePromptRun(normalized);
-    console.log('💾 Legacy data persisted to Supabase');
-  } catch (error) {
-    console.error('❌ Failed to persist to Supabase:', error.message);
-  }
-
-  return payload;
+  // 2. Normalize with brand analysis
+  const normalized = normalizeResponse(
+    'perplexity',
+    dataforseoFormat,
+    { website_domain, brand_name, brand_aliases },
+    { locale }
+  );
+  
+  // 3. Save to tracking table
+  const saved = await saveTrackingResult(prompt_id, normalized);
+  console.log('✅ Tracking result saved:', saved.id);
+  
+  // 4. Return result
+  return {
+    success: true,
+    result_id: saved.id,
+    engine: 'perplexity',
+    was_mentioned: normalized.was_mentioned,
+    sentiment: normalized.sentiment,
+    ranking_position: normalized.ranking_position
+  };
 }
 
 const worker = new Worker('prompt-perplexity', async job=>runJob(job.data), { 

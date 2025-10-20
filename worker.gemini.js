@@ -1,7 +1,7 @@
 import { Worker } from 'bullmq';
 import { GoogleGenerativeAI } from '@google/generative-ai';
-import { normalizeResponse, normalizeGemini } from './libs/normalize.js';
-import { saveTrackingResult, savePromptRun } from './libs/persist.js';
+import { normalizeResponse } from './libs/normalize.js';
+import { saveTrackingResult } from './libs/persist.js';
 
 const { REDIS_HOST, REDIS_PORT = 6379, REDIS_PASSWORD, GEMINI_API_KEY } = process.env;
 
@@ -90,109 +90,66 @@ async function queryGemini(prompt) {
 
 async function runJob(jobData) {
   const {
-    prompt_id,       // UUID from Next.js
-    prompt_text,     // The actual prompt
+    prompt_id,       // REQUIRED: UUID from Next.js
+    prompt_text,     // REQUIRED: The actual prompt
     locale = 'US',
     engine = 'gemini',
     website_id,
-    website_domain,
+    website_domain,  // REQUIRED: for brand tracking
     brand_name,
     brand_aliases,
-    // Legacy support
-    prompt,
-    user_id,
-    session_id
+    user_id
   } = jobData;
-
-  const actualPrompt = prompt_text || prompt;
 
   console.log(`🚀 ${engine} job started:`, { 
     prompt_id, 
-    prompt: actualPrompt?.substring(0, 50) + '...',
+    prompt: prompt_text?.substring(0, 50) + '...',
     locale,
     website_domain
   });
   
+  if (!prompt_id || !website_domain) {
+    throw new Error('prompt_id and website_domain are required for tracking');
+  }
+  
   // 1. Call Google Gemini API
-  const result = await queryGemini(actualPrompt);
+  const result = await queryGemini(prompt_text);
   console.log('✅ Gemini API response received:', { citations_count: result.citations?.length || 0 });
 
-  // NEW FLOW: For tracking prompts with brand context
-  if (prompt_id && website_domain) {
-    try {
-      // Convert Gemini response to DataForSEO-like format for normalization
-      const dataforseoFormat = {
-        tasks: [{
-          cost: 0, // Gemini is free/direct API
-          result: [{
-            markdown: result.enhancedText || result.text,
-            answer: result.text,
-            sources: result.sources,
-            model: 'gemini-2.5-flash'
-          }]
-        }]
-      };
-
-      // 2. Normalize with brand analysis
-      const normalized = normalizeResponse(
-        'gemini',
-        dataforseoFormat,
-        { website_domain, brand_name, brand_aliases },
-        { locale }
-      );
-      
-      // 3. Save to tracking table
-      const saved = await saveTrackingResult(prompt_id, normalized);
-      console.log('✅ Tracking result saved:', saved.id);
-      
-      // 4. Return result
-      return {
-        success: true,
-        result_id: saved.id,
-        engine: 'gemini',
-        was_mentioned: normalized.was_mentioned,
-        sentiment: normalized.sentiment,
-        ranking_position: normalized.ranking_position
-      };
-    } catch (error) {
-      console.error('❌ Failed to save tracking result:', error.message);
-      throw error;
-    }
-  }
-
-  // LEGACY FLOW: Old format for backward compatibility
-  let formattedAnswer = result.enhancedText || result.text;
-  if (result.citations && result.citations.length > 0) {
-    formattedAnswer += '\n\n## Sources:\n';
-    result.citations.forEach(citation => {
-      formattedAnswer += `${citation.number}. [${citation.title}](${citation.url})\n`;
-    });
-  }
-
-  const payload = {
-    engine: 'gemini',
-    provider: 'google',
-    answer: formattedAnswer,
-    enhanced_answer: result.enhancedText,
-    original_answer: result.originalText,
-    raw: result,
-    search_results: result.sources || [],
-    citations: result.citations || [],
-    search_queries: result.searchQueries || []
+  // Convert Gemini response to DataForSEO-like format for normalization
+  const dataforseoFormat = {
+    tasks: [{
+      cost: 0, // Gemini is free/direct API
+      result: [{
+        markdown: result.enhancedText || result.text,
+        answer: result.text,
+        sources: result.sources,
+        model: 'gemini-2.5-flash'
+      }]
+    }]
   };
 
-  try {
-    const normalized = normalizeGemini(
-      { prompt: actualPrompt, user_id, session_id }, 
-      payload
-    );
-    await savePromptRun(normalized);
-    console.log('💾 Legacy data persisted to Supabase');
-  } catch (error) {
-    console.error('❌ Failed to persist to Supabase:', error.message);
-  }
-
-  return payload;
+  // 2. Normalize with brand analysis
+  const normalized = normalizeResponse(
+    'gemini',
+    dataforseoFormat,
+    { website_domain, brand_name, brand_aliases },
+    { locale }
+  );
+  
+  // 3. Save to tracking table
+  const saved = await saveTrackingResult(prompt_id, normalized);
+  console.log('✅ Tracking result saved:', saved.id);
+  
+  // 4. Return result
+  return {
+    success: true,
+    result_id: saved.id,
+    engine: 'gemini',
+    was_mentioned: normalized.was_mentioned,
+    sentiment: normalized.sentiment,
+    ranking_position: normalized.ranking_position
+  };
 }
 
 new Worker('prompt-gemini', async job=>runJob(job.data), { 
