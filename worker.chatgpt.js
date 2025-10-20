@@ -91,5 +91,8 @@ async function runJob({ prompt, locale = 'US', user_id, session_id }) {
   return payload;
 }
 
-new Worker('prompt-chatgpt', async job => runJob(job.data), { connection:{ host:REDIS_HOST, port:Number(REDIS_PORT), password:REDIS_PASSWORD }});
-console.log('worker.chatgpt started (DataForSEO)');
+new Worker('prompt-chatgpt', async job => runJob(job.data), { 
+  connection: { host:REDIS_HOST, port:Number(REDIS_PORT), password:REDIS_PASSWORD },
+  concurrency: 10
+});
+console.log('worker.chatgpt started (DataForSEO) with concurrency: 10');

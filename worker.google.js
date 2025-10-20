@@ -88,7 +88,10 @@ async function runJob({prompt, locale='US', user_id, session_id}){
 
   return payload;
 }
-const worker = new Worker('prompt-google', async job=>runJob(job.data), { connection:{ host:REDIS_HOST, port:Number(REDIS_PORT), password:REDIS_PASSWORD }});
+const worker = new Worker('prompt-google', async job=>runJob(job.data), { 
+  connection: { host:REDIS_HOST, port:Number(REDIS_PORT), password:REDIS_PASSWORD },
+  concurrency: 10
+});
 
 worker.on('error', (err) => {
   console.error('❌ Worker error:', err);
@@ -102,7 +105,7 @@ worker.on('completed', (job) => {
   console.log('✅ Job completed:', job.id);
 });
 
-console.log('worker.google started (DataForSEO)');
+console.log('worker.google started (DataForSEO) with concurrency: 10');
 console.log('Connecting to Redis:', { host: REDIS_HOST, port: REDIS_PORT, hasPassword: !!REDIS_PASSWORD });
 
 // Catch unhandled errors
