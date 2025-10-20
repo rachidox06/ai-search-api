@@ -189,11 +189,12 @@ export function normalizeResponse(engine, dataforseoResponse, brandContext, jobD
       apiCost = task?.cost || 0;
     }
     else if (engine === 'google') {
-      // Google AI Mode normalization
-      answer_markdown = result?.markdown || '';
+      // Google AI Mode normalization - extract from nested items[0]
+      const aiOverview = result?.items?.[0];
+      answer_markdown = aiOverview?.markdown || '';
       answer_text = stripMarkdown(answer_markdown);
       
-      const references = result?.references || [];
+      const references = aiOverview?.references || [];
       citations = references.map((ref, idx) => ({
         number: idx + 1,
         url: ref.url || '',
@@ -213,7 +214,7 @@ export function normalizeResponse(engine, dataforseoResponse, brandContext, jobD
     const sentiment = was_mentioned ? analyzeSentiment(answer_text, brandContext) : 'none';
     const ranking_position = extractRankingPosition(answer_text, citations, brandContext);
     
-    return {
+  return {
       // Core fields
       engine,
       model,
