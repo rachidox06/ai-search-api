@@ -82,11 +82,12 @@ app.get('/ready', async () => ({ ok: true }));
 
 // --- Single-run (per engine) ---
 app.post('/api/v1/prompt-runs', async (req, reply) => {
-  const { prompt, engine = 'chatgpt', locale = 'US', persona = 'default' } = req.body || {};
+  const { prompt, engine = 'chatgpt', locale = 'US', persona = 'default', session_id } = req.body || {};
   if (!prompt) return reply.code(400).send({ error: 'prompt is required' });
 
   const idem = (req.headers['idempotency-key'] || '').toString().trim();
-  const payload = { prompt, engine, locale, persona, created_at: Date.now() };
+  const user_id = req.user?.sub || null;
+  const payload = { prompt, engine, locale, persona, user_id, session_id, created_at: Date.now() };
 
   // With Redis: push to the engine's queue
   if (redisAvailable) {
@@ -176,13 +177,14 @@ app.get('/api/v1/prompt-runs/:id', async (req, reply) => {
 
 // --- Batch: fan-out to 4 engines ---
 app.post('/api/v1/prompt-runs/batch', async (req, reply) => {
-  const { prompt, locale = 'US', engines = ['chatgpt', 'perplexity', 'gemini', 'google'] } = (req.body || {});
+  const { prompt, locale = 'US', session_id, engines = ['chatgpt', 'perplexity', 'gemini', 'google'] } = (req.body || {});
   if (!prompt || !Array.isArray(engines) || engines.length === 0) {
     return reply.code(400).send({ error: 'prompt and engines[] are required' });
   }
   if (!redisAvailable) return reply.code(503).send({ error: 'redis_unavailable' });
 
   const idem = (req.headers['idempotency-key'] || '').toString().trim();
+  const user_id = req.user?.sub || null;
   const group_id = randomUUID();
   const job_ids = {};
 
@@ -193,7 +195,7 @@ app.post('/api/v1/prompt-runs/batch', async (req, reply) => {
     try {
       // Create unique jobId by replacing colons with dashes
       const sanitizedIdem = idem.replace(/:/g, '-');
-      const job = await q.add('run', { prompt, engine: eng, locale, group_id }, {
+      const job = await q.add('run', { prompt, engine: eng, locale, user_id, session_id, group_id }, {
         jobId: idem ? `${sanitizedIdem}-${eng}` : undefined,
         attempts: 3,
         backoff: { type: 'exponential', delay: 2000 },

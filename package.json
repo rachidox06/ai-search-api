@@ -13,7 +13,8 @@
   "dependencies": {
     "@fastify/cors": "^11.1.0",
     "@google/generative-ai": "^0.24.1",
-    "bullmq": "^5.8.1",
+    "@supabase/supabase-js": "^2.75.1",
+    "bullmq": "^5.61.0",
     "fastify": "^5.0.0",
     "jsonwebtoken": "^9.0.2"
   }

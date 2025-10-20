@@ -1,4 +1,7 @@
 import { Worker } from 'bullmq';
+import { normalizePerplexity } from './libs/normalize.js';
+import { savePromptRun } from './libs/persist.js';
+
 const { REDIS_HOST, REDIS_PORT = 6379, REDIS_PASSWORD, PERPLEXITY_API_KEY } = process.env;
 
 // Function to query Perplexity API
@@ -51,11 +54,11 @@ function extractAnswer(perplexityResponse) {
   return null;
 }
 
-async function runJob({prompt, locale='US'}){
+async function runJob({prompt, locale='US', user_id, session_id}){
   const perplexityResponse = await queryPerplexity(prompt);
   const answer = extractAnswer(perplexityResponse);
 
-  return {
+  const payload = {
     engine: 'perplexity',
     provider: 'perplexity',
     answer,
@@ -63,6 +66,12 @@ async function runJob({prompt, locale='US'}){
     search_results: perplexityResponse.search_results || [],
     usage: perplexityResponse.usage || {}
   };
+
+  // Normalize and persist to Supabase
+  const normalized = normalizePerplexity({ prompt, user_id, session_id }, payload);
+  await savePromptRun(normalized);
+
+  return payload;
 }
 
 new Worker('prompt-perplexity', async job=>runJob(job.data), { connection:{ host:REDIS_HOST, port:Number(REDIS_PORT), password:REDIS_PASSWORD }});

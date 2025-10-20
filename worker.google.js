@@ -1,4 +1,7 @@
 import { Worker } from 'bullmq';
+import { normalizeDataforseoGoogle } from './libs/normalize.js';
+import { savePromptRun } from './libs/persist.js';
+
 const { REDIS_HOST, REDIS_PORT = 6379, REDIS_PASSWORD, DATAFORSEO_USERNAME, DATAFORSEO_PASSWORD } = process.env;
 
 // Helper function to create Basic Auth header
@@ -56,20 +59,26 @@ function extractAnswer(dataforseoResponse) {
   }
   return null;
 }
-async function runJob({prompt, locale='US'}){
+async function runJob({prompt, locale='US', user_id, session_id}){
   if (!DATAFORSEO_USERNAME) throw new Error('Missing DATAFORSEO_USERNAME');
   if (!DATAFORSEO_PASSWORD) throw new Error('Missing DATAFORSEO_PASSWORD');
 
   const dataforseoResponse = await queryDataForSEOGoogleAI(prompt, locale);
   const answer = extractAnswer(dataforseoResponse);
 
-  return {
+  const payload = {
     engine: 'google',
     provider: 'dataforseo',
     provider_response: dataforseoResponse,
     answer,
     raw: dataforseoResponse
   };
+
+  // Normalize and persist to Supabase
+  const normalized = normalizeDataforseoGoogle({ prompt, user_id, session_id }, payload);
+  await savePromptRun(normalized);
+
+  return payload;
 }
 new Worker('prompt-google', async job=>runJob(job.data), { connection:{ host:REDIS_HOST, port:Number(REDIS_PORT), password:REDIS_PASSWORD }});
 console.log('worker.google started (DataForSEO)');
