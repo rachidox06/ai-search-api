@@ -233,7 +233,7 @@ app.post('/api/v1/prompt-runs', async (req, reply) => {
       .select(`
         content,
         website_id,
-        websites!inner (
+        websites!website_id (
           id,
           domain,
           brand_name,
@@ -244,7 +244,8 @@ app.post('/api/v1/prompt-runs', async (req, reply) => {
       .single();
     
     if (promptError || !promptData) {
-      return reply.code(404).send({ error: 'prompt_not_found' });
+      console.error('Prompt fetch error:', promptError, 'Data:', promptData);
+      return reply.code(404).send({ error: 'prompt_not_found', details: promptError?.message });
     }
     
     promptText = promptData.content;
@@ -487,7 +488,7 @@ app.post('/api/v1/prompt-runs/batch', async (req, reply) => {
       .select(`
         content,
         website_id,
-        websites!inner (
+        websites!website_id (
           id,
           domain,
           brand_name,
@@ -498,7 +499,8 @@ app.post('/api/v1/prompt-runs/batch', async (req, reply) => {
       .single();
     
     if (promptError || !promptData) {
-      return reply.code(404).send({ error: 'prompt_not_found' });
+      console.error('Prompt fetch error:', promptError, 'Data:', promptData);
+      return reply.code(404).send({ error: 'prompt_not_found', details: promptError?.message });
     }
     
     promptText = promptData.content;
