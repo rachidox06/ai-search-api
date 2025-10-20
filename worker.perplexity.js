@@ -82,5 +82,29 @@ async function runJob({prompt, locale='US', user_id, session_id}){
   return payload;
 }
 
-new Worker('prompt-perplexity', async job=>runJob(job.data), { connection:{ host:REDIS_HOST, port:Number(REDIS_PORT), password:REDIS_PASSWORD }});
+const worker = new Worker('prompt-perplexity', async job=>runJob(job.data), { connection:{ host:REDIS_HOST, port:Number(REDIS_PORT), password:REDIS_PASSWORD }});
+
+worker.on('error', (err) => {
+  console.error('❌ Worker error:', err);
+});
+
+worker.on('failed', (job, err) => {
+  console.error('❌ Job failed:', job.id, err.message);
+});
+
+worker.on('completed', (job) => {
+  console.log('✅ Job completed:', job.id);
+});
+
 console.log('worker.perplexity started (Perplexity API)');
+console.log('Connecting to Redis:', { host: REDIS_HOST, port: REDIS_PORT, hasPassword: !!REDIS_PASSWORD });
+
+// Catch unhandled errors
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('❌ Unhandled Rejection:', reason);
+});
+
+process.on('uncaughtException', (error) => {
+  console.error('❌ Uncaught Exception:', error);
+  process.exit(1);
+});
