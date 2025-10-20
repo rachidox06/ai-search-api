@@ -67,10 +67,18 @@ await app.register(cors, {
 // --- Auth hook ---
 app.addHook('preHandler', async (req, res) => {
   if (req.routerPath?.startsWith('/health') || req.routerPath?.startsWith('/ready')) return;
-  if (SKIP_AUTH === 'true') return;
+  
+  if (SKIP_AUTH === 'true') {
+    // Development mode - still need user_id for tracking
+    req.user = { sub: 'dev-user-id', email: 'dev@example.com' };
+    return;
+  }
+  
   const auth = req.headers.authorization || '';
   const token = auth.startsWith('Bearer ') ? auth.slice(7) : '';
+  
   if (!token) return res.code(401).send({ error: 'unauthorized' });
+  
   try {
     const payload = jwt.verify(token, SUPABASE_JWT_SECRET);
     req.user = { sub: payload.sub, email: payload.email };
@@ -194,13 +202,138 @@ app.post('/api/v1/tracking/run', async (req, reply) => {
   });
 });
 
-// --- Legacy Single-run (per engine) - DEPRECATED, use /api/v1/tracking/run ---
+// --- POST /api/v1/prompt-runs (supports both old and new formats) ---
 app.post('/api/v1/prompt-runs', async (req, reply) => {
-  const { prompt, engine = 'chatgpt', locale = 'US', persona = 'default', session_id } = req.body || {};
-  if (!prompt) return reply.code(400).send({ error: 'prompt is required' });
+  const { 
+    prompt_id,           // NEW: UUID from Next.js
+    prompt_text,         // NEW: Can be provided or fetched
+    prompt,              // LEGACY: Old format
+    engine = 'chatgpt', 
+    locale = 'US',
+    website_id,          // NEW: For brand context
+    persona = 'default', 
+    session_id 
+  } = req.body || {};
+  
+  const user_id = req.user?.sub || null;
+  
+  // NEW FORMAT: If prompt_id is provided, fetch from Supabase
+  if (prompt_id) {
+    // Fetch prompt and website details from Supabase if not provided
+    let promptText = prompt_text;
+    let websiteData = null;
+    
+    if (!promptText || !website_id) {
+      const { data: promptData, error: promptError } = await supabase
+        .from('prompts')
+        .select(`
+          content,
+          website_id,
+          websites!inner (
+            id,
+            domain,
+            brand_name,
+            brand_aliases
+          )
+        `)
+        .eq('id', prompt_id)
+        .single();
+      
+      if (promptError || !promptData) {
+        return reply.code(404).send({ error: 'prompt_not_found' });
+      }
+      
+      promptText = promptData.content;
+      websiteData = {
+        website_id: promptData.websites.id,
+        website_domain: promptData.websites.domain,
+        brand_name: promptData.websites.brand_name,
+        brand_aliases: promptData.websites.brand_aliases || []
+      };
+    } else if (website_id) {
+      // Fetch website data if provided
+      const { data: website, error: websiteError } = await supabase
+        .from('websites')
+        .select('id, domain, brand_name, brand_aliases')
+        .eq('id', website_id)
+        .single();
+      
+      if (!websiteError && website) {
+        websiteData = {
+          website_id: website.id,
+          website_domain: website.domain,
+          brand_name: website.brand_name,
+          brand_aliases: website.brand_aliases || []
+        };
+      }
+    }
+
+    const payload = {
+      prompt_id,
+      prompt_text: promptText,
+      engine,
+      locale,
+      user_id,
+      ...websiteData,
+      created_at: Date.now()
+    };
+
+    // With Redis: push to the engine's queue
+    if (redisAvailable) {
+      const q = queues[engine];
+      if (!q) return reply.code(400).send({ error: `unsupported engine: ${engine}` });
+
+      try {
+        const idem = (req.headers['idempotency-key'] || '').toString().trim();
+        const job = await q.add('run', payload, {
+          jobId: idem || undefined,
+          attempts: 3,
+          backoff: { type: 'exponential', delay: 2000 },
+          removeOnComplete: { age: 600 },
+          removeOnFail: { age: 86400 },
+        });
+        
+        return reply.send({ 
+          job_id: job.id,
+          engine,
+          prompt_id 
+        });
+      } catch (error) {
+        console.error('Queue error:', error.message, error.code, error.name);
+        if (error.message?.includes('ECONNREFUSED') ||
+            error.message?.includes('Redis connection') ||
+            error.message?.includes('getaddrinfo ENOTFOUND') ||
+            error.message?.includes('Connection timed out') ||
+            error.code === 'ECONNREFUSED' ||
+            error.code === 'ENOTFOUND' ||
+            error.code === 'ETIMEDOUT') {
+          return reply.code(503).send({ error: 'redis_unavailable' });
+        }
+        if (error.message?.includes('Custom Id cannot contain') ||
+            error.message?.includes('Invalid jobId')) {
+          return reply.code(400).send({ error: 'invalid_idempotency_key' });
+        }
+        throw error;
+      }
+    }
+
+    // Fallback without Redis
+    const id = String(Date.now());
+    memJobs.set(id, { status: 'running' });
+    setTimeout(() => {
+      memJobs.set(id, {
+        status: 'done',
+        result: { answer: `Mocked answer for: "${promptText}"` }
+      });
+    }, 1500);
+    
+    return reply.send({ job_id: id, engine, prompt_id });
+  }
+
+  // LEGACY FORMAT: Old behavior for backward compatibility
+  if (!prompt) return reply.code(400).send({ error: 'prompt or prompt_id is required' });
 
   const idem = (req.headers['idempotency-key'] || '').toString().trim();
-  const user_id = req.user?.sub || null;
   const payload = { prompt, engine, locale, persona, user_id, session_id, created_at: Date.now() };
 
   // With Redis: push to the engine's queue
@@ -213,13 +346,12 @@ app.post('/api/v1/prompt-runs', async (req, reply) => {
         jobId: idem || undefined,
         attempts: 3,
         backoff: { type: 'exponential', delay: 2000 },
-        removeOnComplete: { age: 600 },  // keep 10m so clients can read
+        removeOnComplete: { age: 600 },
         removeOnFail: { age: 86400 },
       });
       return reply.send({ job_id: job.id });
     } catch (error) {
       console.error('Queue error:', error.message, error.code, error.name);
-      // Redis connection failure - return 503 Service Unavailable
       if (error.message?.includes('ECONNREFUSED') ||
           error.message?.includes('Redis connection') ||
           error.message?.includes('getaddrinfo ENOTFOUND') ||
@@ -229,12 +361,10 @@ app.post('/api/v1/prompt-runs', async (req, reply) => {
           error.code === 'ETIMEDOUT') {
         return reply.code(503).send({ error: 'redis_unavailable' });
       }
-      // BullMQ validation errors (like invalid jobId) - return 400 Bad Request
       if (error.message?.includes('Custom Id cannot contain') ||
           error.message?.includes('Invalid jobId')) {
         return reply.code(400).send({ error: 'invalid_idempotency_key' });
       }
-      // Other queue errors - re-throw as 500
       throw error;
     }
   }
@@ -387,93 +517,124 @@ app.post('/api/v1/tracking/batch', async (req, reply) => {
   });
 });
 
-// --- Legacy Batch: fan-out to multiple engines ---
+// --- POST /api/v1/prompt-runs/batch (Multi-Engine with Supabase fetching) ---
 app.post('/api/v1/prompt-runs/batch', async (req, reply) => {
   const { 
     prompt_id,
-    prompt_text, 
-    engines = ['chatgpt', 'perplexity', 'gemini', 'google'],
-    locale = 'US', 
+    prompt_text,
+    locale = 'US',
     website_id,
-    website_domain,
-    brand_name,
-    brand_aliases
-  } = (req.body || {});
+    engines = ['chatgpt', 'perplexity', 'gemini', 'google']
+  } = req.body || {};
   
-  // Validate required fields
-  if (!prompt_id) return reply.code(400).send({ error: 'prompt_id is required' });
-  if (!prompt_text) return reply.code(400).send({ error: 'prompt_text is required' });
-  if (!Array.isArray(engines) || engines.length === 0) {
-    return reply.code(400).send({ error: 'engines[] array is required' });
+  if (!prompt_id || !Array.isArray(engines) || engines.length === 0) {
+    return reply.code(400).send({ 
+      error: 'prompt_id and engines[] are required' 
+    });
   }
-  if (!redisAvailable) return reply.code(503).send({ error: 'redis_unavailable' });
-
-  // Fetch website context from Supabase if not provided
-  let websiteContext = { website_domain, brand_name, brand_aliases };
-  if (website_id && (!website_domain || !brand_name)) {
-    const fetchedContext = await fetchWebsiteContext(website_id);
-    if (fetchedContext) {
-      websiteContext = { ...websiteContext, ...fetchedContext };
-    }
+  
+  if (!redisAvailable) {
+    return reply.code(503).send({ error: 'redis_unavailable' });
   }
 
-  const idem = (req.headers['idempotency-key'] || '').toString().trim();
   const user_id = req.user?.sub || null;
   const group_id = randomUUID();
   const job_ids = {};
+  
+  // Fetch prompt and website data from Supabase if not provided
+  let promptText = prompt_text;
+  let websiteData = null;
+  
+  if (!promptText || !website_id) {
+    const { data: promptData, error: promptError } = await supabase
+      .from('prompts')
+      .select(`
+        content,
+        website_id,
+        websites!inner (
+          id,
+          domain,
+          brand_name,
+          brand_aliases
+        )
+      `)
+      .eq('id', prompt_id)
+      .single();
+    
+    if (promptError || !promptData) {
+      return reply.code(404).send({ error: 'prompt_not_found' });
+    }
+    
+    promptText = promptData.content;
+    websiteData = {
+      website_id: promptData.websites.id,
+      domain: promptData.websites.domain,
+      brand_name: promptData.websites.brand_name,
+      brand_aliases: promptData.websites.brand_aliases || []
+    };
+  } else if (website_id && !websiteData) {
+    // Fetch website data if website_id provided but no data fetched yet
+    const { data: website, error: websiteError } = await supabase
+      .from('websites')
+      .select('id, domain, brand_name, brand_aliases')
+      .eq('id', website_id)
+      .single();
+    
+    if (!websiteError && website) {
+      websiteData = {
+        website_id: website.id,
+        domain: website.domain,
+        brand_name: website.brand_name,
+        brand_aliases: website.brand_aliases || []
+      };
+    }
+  }
 
-  // Build job payload with new format
-  const basePayload = {
-    prompt_id,
-    prompt_text,
-    locale,
-    website_id: website_id || null,
-    website_domain: websiteContext.website_domain || null,
-    brand_name: websiteContext.brand_name || null,
-    brand_aliases: websiteContext.brand_aliases || [],
-    user_id,
-    group_id,
-    created_at: Date.now()
-  };
-
+  // Create jobs for each engine
   for (const eng of engines) {
     const q = queues[eng];
-    if (!q) return reply.code(400).send({ error: `unsupported engine: ${eng}` });
+    if (!q) {
+      console.warn(`Unsupported engine: ${eng}, skipping...`);
+      continue;
+    }
 
     try {
-      // Create unique jobId by replacing colons with dashes
+      const idem = (req.headers['idempotency-key'] || '').toString().trim();
       const sanitizedIdem = idem.replace(/:/g, '-');
-      const job = await q.add('run', { ...basePayload, engine: eng }, {
+      
+      const job = await q.add('run', {
+        prompt_id,
+        prompt_text: promptText,
+        engine: eng,
+        locale,
+        user_id,
+        group_id,
+        website_id: websiteData?.website_id || null,
+        website_domain: websiteData?.domain || null,
+        brand_name: websiteData?.brand_name || null,
+        brand_aliases: websiteData?.brand_aliases || [],
+        created_at: Date.now()
+      }, {
         jobId: idem ? `${sanitizedIdem}-${eng}` : undefined,
         attempts: 3,
         backoff: { type: 'exponential', delay: 2000 },
         removeOnComplete: { age: 600 },
         removeOnFail: { age: 86400 },
       });
+      
       job_ids[eng] = job.id;
     } catch (error) {
-      console.error('Queue error:', error.message, error.code, error.name);
-      // Redis connection failure - return 503 Service Unavailable
-      if (error.message?.includes('ECONNREFUSED') ||
-          error.message?.includes('Redis connection') ||
-          error.message?.includes('getaddrinfo ENOTFOUND') ||
-          error.message?.includes('Connection timed out') ||
-          error.code === 'ECONNREFUSED' ||
-          error.code === 'ENOTFOUND' ||
-          error.code === 'ETIMEDOUT') {
-        return reply.code(503).send({ error: 'redis_unavailable' });
-      }
-      // BullMQ validation errors (like invalid jobId) - return 400 Bad Request
-      if (error.message?.includes('Custom Id cannot contain') ||
-          error.message?.includes('Invalid jobId')) {
-        return reply.code(400).send({ error: 'invalid_idempotency_key' });
-      }
-      // Other queue errors - re-throw as 500
-      throw error;
+      console.error(`Queue error for ${eng}:`, error.message);
+      // Continue with other engines even if one fails
     }
   }
 
-  return reply.send({ group_id, job_ids });
+  return reply.send({ 
+    group_id, 
+    job_ids,
+    prompt_id,
+    engines_queued: Object.keys(job_ids).length
+  });
 });
 
 // --- SSE: live progress per group (polls queue states) ---
