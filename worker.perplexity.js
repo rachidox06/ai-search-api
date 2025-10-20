@@ -18,7 +18,7 @@ async function queryPerplexity(prompt, model = 'sonar') {
     messages: [
       {
         role: 'system',
-        content: 'Be precise and concise.'
+        content: 'Provide detailed, well-researched answers and include citations to sources whenever possible.'
       },
       {
         role: 'user',
