@@ -17,6 +17,64 @@ if (!SUPABASE_SERVICE_ROLE_KEY) {
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 console.log('✅ Supabase client initialized successfully');
 
+// ============================================================================
+// NEW FUNCTION: Save to prompt_tracking_results table
+// ============================================================================
+
+export async function saveTrackingResult(prompt_id, normalizedData) {
+  try {
+    const { data, error } = await supabase
+      .from('prompt_tracking_results')
+      .insert({
+        prompt_id,
+        engine: normalizedData.engine,
+        model: normalizedData.model,
+        checked_at: normalizedData.checked_at,
+        
+        // Content
+        answer_text: normalizedData.answer_text,
+        answer_markdown: normalizedData.answer_markdown,
+        answer_length: normalizedData.answer_length,
+        
+        // Analysis
+        was_mentioned: normalizedData.was_mentioned,
+        brand_mentioned: normalizedData.brand_mentioned,
+        sentiment: normalizedData.sentiment,
+        ranking_position: normalizedData.ranking_position,
+        
+        // Citations (JSONB array - NOT separate table)
+        total_citations: normalizedData.total_citations,
+        citations: normalizedData.citations,
+        
+        // Provider
+        provider: normalizedData.provider,
+        cost: normalizedData.cost,
+        provider_raw: normalizedData.provider_raw,
+        
+        // Metadata & extra
+        metadata: normalizedData.metadata,
+        extra: normalizedData.extra
+      })
+      .select()
+      .single();
+    
+    if (error) {
+      console.error('❌ Failed to save to Supabase (prompt_tracking_results):', error);
+      throw error;
+    }
+    
+    console.log('✅ Saved tracking result to Supabase:', data.id);
+    return data;
+  } catch (err) {
+    console.error('❌ Error in saveTrackingResult:', err);
+    throw err;
+  }
+}
+
+// ============================================================================
+// LEGACY FUNCTION: Save to prompt_runs table (Keep for backward compatibility)
+// ============================================================================
+
 export async function savePromptRun(row) {
   const body = {
     user_id: row.user_id ?? null,

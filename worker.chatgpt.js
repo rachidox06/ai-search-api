@@ -1,6 +1,6 @@
 import { Worker } from 'bullmq';
-import { normalizeDataforseoChatGPT } from './libs/normalize.js';
-import { savePromptRun } from './libs/persist.js';
+import { normalizeResponse, normalizeDataforseoChatGPT } from './libs/normalize.js';
+import { saveTrackingResult, savePromptRun } from './libs/persist.js';
 
 const { REDIS_HOST, REDIS_PORT = 6379, REDIS_PASSWORD, DATAFORSEO_USERNAME, DATAFORSEO_PASSWORD } = process.env;
 
@@ -61,16 +61,71 @@ function extractAnswer(dataforseoResponse) {
   return null;
 }
 
-async function runJob({ prompt, locale = 'US', user_id, session_id }) {
-  console.log('🚀 ChatGPT job started:', { prompt: prompt.substring(0, 50) + '...', locale, has_user_id: !!user_id, has_session_id: !!session_id });
+async function runJob(jobData) {
+  const {
+    prompt_id,       // UUID from Next.js
+    prompt_text,     // The actual prompt (support old format too)
+    locale = 'US',   // 'US', 'UK', etc.
+    engine = 'chatgpt',
+    website_id,      // UUID
+    website_domain,  // 'example.com'
+    brand_name,      // 'Example'
+    brand_aliases,   // ['Example Inc']
+    // Legacy support
+    prompt,
+    user_id,
+    session_id
+  } = jobData;
+
+  // Support both old and new formats
+  const actualPrompt = prompt_text || prompt;
+  
+  console.log(`🚀 ${engine} job started:`, { 
+    prompt_id, 
+    prompt: actualPrompt?.substring(0, 50) + '...',
+    locale,
+    website_domain
+  });
   
   if (!DATAFORSEO_USERNAME) throw new Error('Missing DATAFORSEO_USERNAME');
   if (!DATAFORSEO_PASSWORD) throw new Error('Missing DATAFORSEO_PASSWORD');
 
-  const dataforseoResponse = await queryDataForSEOChatGPT(prompt, locale);
-  const answer = extractAnswer(dataforseoResponse);
+  // 1. Call DataForSEO API
+  const dataforseoResponse = await queryDataForSEOChatGPT(actualPrompt, locale);
   console.log('✅ DataForSEO ChatGPT API response received');
 
+  // NEW FLOW: Use new normalization if prompt_id exists
+  if (prompt_id && website_domain) {
+    try {
+      // 2. Normalize response with brand analysis
+      const normalized = normalizeResponse(
+        'chatgpt',
+        dataforseoResponse,
+        { website_domain, brand_name, brand_aliases },
+        { locale }
+      );
+      
+      // 3. Save to new tracking table
+      const saved = await saveTrackingResult(prompt_id, normalized);
+      console.log('✅ Tracking result saved:', saved.id);
+      
+      // 4. Return result for job queue
+      return {
+        success: true,
+        result_id: saved.id,
+        engine: 'chatgpt',
+        was_mentioned: normalized.was_mentioned,
+        sentiment: normalized.sentiment,
+        ranking_position: normalized.ranking_position
+      };
+    } catch (error) {
+      console.error('❌ Failed to save tracking result:', error.message);
+      throw error;
+    }
+  }
+
+  // LEGACY FLOW: Use old normalization for backward compatibility
+  const answer = extractAnswer(dataforseoResponse);
   const payload = {
     engine: 'chatgpt',
     provider: 'dataforseo',
@@ -79,11 +134,13 @@ async function runJob({ prompt, locale = 'US', user_id, session_id }) {
     raw: dataforseoResponse
   };
 
-  // Normalize and persist to Supabase
   try {
-    const normalized = normalizeDataforseoChatGPT({ prompt, user_id, session_id }, payload);
+    const normalized = normalizeDataforseoChatGPT(
+      { prompt: actualPrompt, user_id, session_id }, 
+      payload
+    );
     await savePromptRun(normalized);
-    console.log('💾 Data persisted to Supabase');
+    console.log('💾 Legacy data persisted to Supabase');
   } catch (error) {
     console.error('❌ Failed to persist to Supabase:', error.message);
   }

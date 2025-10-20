@@ -5,6 +5,7 @@ import cors from '@fastify/cors';
 import { Queue as BullQueue } from 'bullmq';
 import jwt from 'jsonwebtoken';
 import { randomUUID } from 'crypto';
+import { createClient } from '@supabase/supabase-js';
 
 const {
   PORT = 4000,
@@ -12,9 +13,14 @@ const {
   REDIS_HOST,
   REDIS_PORT = 6379,
   REDIS_PASSWORD,
+  SUPABASE_URL,
+  SUPABASE_SERVICE_ROLE_KEY,
   SUPABASE_JWT_SECRET,
   SKIP_AUTH = 'true',
 } = process.env;
+
+// Initialize Supabase client for context fetching
+const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
 const hasRedis = Boolean(REDIS_HOST);
 const connection = hasRedis
@@ -73,6 +79,33 @@ app.addHook('preHandler', async (req, res) => {
   }
 });
 
+// --- Helper: Fetch website context from Supabase ---
+async function fetchWebsiteContext(website_id) {
+  if (!website_id) return null;
+  
+  try {
+    const { data, error } = await supabase
+      .from('websites')
+      .select('domain, brand_name, brand_aliases')
+      .eq('id', website_id)
+      .single();
+    
+    if (error) {
+      console.error('Failed to fetch website context:', error.message);
+      return null;
+    }
+    
+    return {
+      website_domain: data.domain,
+      brand_name: data.brand_name,
+      brand_aliases: data.brand_aliases || []
+    };
+  } catch (err) {
+    console.error('Error fetching website context:', err.message);
+    return null;
+  }
+}
+
 // --- In-memory fallback (no Redis) ---
 const memJobs = new Map();
 
@@ -80,7 +113,88 @@ const memJobs = new Map();
 app.get('/health', async () => ({ ok: true }));
 app.get('/ready', async () => ({ ok: true }));
 
-// --- Single-run (per engine) ---
+// --- New Tracking Endpoint: POST /api/v1/tracking/run ---
+app.post('/api/v1/tracking/run', async (req, reply) => {
+  const { 
+    prompt_id,      // REQUIRED
+    prompt_text,    // REQUIRED
+    engines = ['chatgpt'], 
+    locale = 'US',
+    website_id      // REQUIRED
+  } = req.body || {};
+
+  // Validation
+  if (!prompt_id || !prompt_text || !website_id) {
+    return reply.code(400).send({ 
+      error: 'prompt_id, prompt_text, and website_id are required' 
+    });
+  }
+
+  if (!redisAvailable) return reply.code(503).send({ error: 'redis_unavailable' });
+
+  // Fetch website/brand context from Supabase
+  const { data: website, error: websiteError } = await supabase
+    .from('websites')
+    .select('domain, brand_name, brand_aliases')
+    .eq('id', website_id)
+    .single();
+
+  if (websiteError || !website) {
+    return reply.code(404).send({ error: 'website_not_found' });
+  }
+
+  const job_ids = {};
+
+  // Queue jobs for each selected engine
+  for (const engine of engines) {
+    const q = queues[engine];
+    if (!q) continue;
+
+    try {
+      const job = await q.add('run', {
+        prompt_id,
+        prompt_text,
+        locale,
+        engine,
+        website_id,
+        website_domain: website.domain,
+        brand_name: website.brand_name,
+        brand_aliases: website.brand_aliases || [],
+        user_id: req.user?.sub || null,
+        created_at: Date.now()
+      }, {
+        attempts: 3,
+        backoff: { type: 'exponential', delay: 2000 },
+        removeOnComplete: { age: 600 },
+        removeOnFail: { age: 86400 },
+      });
+
+      job_ids[engine] = job.id;
+    } catch (error) {
+      console.error('Queue error:', error.message, error.code, error.name);
+      // Redis connection failure - return 503 Service Unavailable
+      if (error.message?.includes('ECONNREFUSED') ||
+          error.message?.includes('Redis connection') ||
+          error.message?.includes('getaddrinfo ENOTFOUND') ||
+          error.message?.includes('Connection timed out') ||
+          error.code === 'ECONNREFUSED' ||
+          error.code === 'ENOTFOUND' ||
+          error.code === 'ETIMEDOUT') {
+        return reply.code(503).send({ error: 'redis_unavailable' });
+      }
+      // Other queue errors - re-throw as 500
+      throw error;
+    }
+  }
+
+  return reply.send({ 
+    success: true,
+    prompt_id,
+    job_ids 
+  });
+});
+
+// --- Legacy Single-run (per engine) - DEPRECATED, use /api/v1/tracking/run ---
 app.post('/api/v1/prompt-runs', async (req, reply) => {
   const { prompt, engine = 'chatgpt', locale = 'US', persona = 'default', session_id } = req.body || {};
   if (!prompt) return reply.code(400).send({ error: 'prompt is required' });
@@ -141,9 +255,7 @@ app.post('/api/v1/prompt-runs', async (req, reply) => {
 });
 
 // --- Get status/result: search all engine queues ---
-app.get('/api/v1/prompt-runs/:id', async (req, reply) => {
-  const { id } = req.params;
-
+async function getJobStatus(id, reply) {
   if (redisAvailable) {
     for (const q of Object.values(queues)) {
       try {
@@ -173,20 +285,156 @@ app.get('/api/v1/prompt-runs/:id', async (req, reply) => {
 
   if (!memJobs.has(id)) return reply.code(404).send({ error: 'not_found' });
   return reply.send(memJobs.get(id));
+}
+
+// New tracking status endpoint
+app.get('/api/v1/tracking/status/:job_id', async (req, reply) => {
+  const { job_id } = req.params;
+  return getJobStatus(job_id, reply);
 });
 
-// --- Batch: fan-out to 4 engines ---
+// Legacy status endpoint
+app.get('/api/v1/prompt-runs/:id', async (req, reply) => {
+  const { id } = req.params;
+  return getJobStatus(id, reply);
+});
+
+// --- New Tracking Batch Endpoint: POST /api/v1/tracking/batch ---
+app.post('/api/v1/tracking/batch', async (req, reply) => {
+  const { 
+    prompt_id,      // REQUIRED
+    prompt_text,    // REQUIRED
+    engines = ['chatgpt', 'perplexity'], 
+    locale = 'US',
+    website_id      // REQUIRED
+  } = req.body || {};
+
+  // Validation
+  if (!prompt_id || !prompt_text || !website_id) {
+    return reply.code(400).send({ 
+      error: 'prompt_id, prompt_text, and website_id are required' 
+    });
+  }
+
+  if (!Array.isArray(engines) || engines.length === 0) {
+    return reply.code(400).send({ error: 'engines[] array is required' });
+  }
+
+  if (!redisAvailable) return reply.code(503).send({ error: 'redis_unavailable' });
+
+  // Fetch website/brand context from Supabase
+  const { data: website, error: websiteError } = await supabase
+    .from('websites')
+    .select('domain, brand_name, brand_aliases')
+    .eq('id', website_id)
+    .single();
+
+  if (websiteError || !website) {
+    return reply.code(404).send({ error: 'website_not_found' });
+  }
+
+  const group_id = randomUUID();
+  const job_ids = {};
+
+  // Queue jobs for each selected engine
+  for (const engine of engines) {
+    const q = queues[engine];
+    if (!q) continue;
+
+    try {
+      const job = await q.add('run', {
+        prompt_id,
+        prompt_text,
+        locale,
+        engine,
+        website_id,
+        website_domain: website.domain,
+        brand_name: website.brand_name,
+        brand_aliases: website.brand_aliases || [],
+        user_id: req.user?.sub || null,
+        group_id,
+        created_at: Date.now()
+      }, {
+        attempts: 3,
+        backoff: { type: 'exponential', delay: 2000 },
+        removeOnComplete: { age: 600 },
+        removeOnFail: { age: 86400 },
+      });
+
+      job_ids[engine] = job.id;
+    } catch (error) {
+      console.error('Queue error:', error.message, error.code, error.name);
+      // Redis connection failure - return 503 Service Unavailable
+      if (error.message?.includes('ECONNREFUSED') ||
+          error.message?.includes('Redis connection') ||
+          error.message?.includes('getaddrinfo ENOTFOUND') ||
+          error.message?.includes('Connection timed out') ||
+          error.code === 'ECONNREFUSED' ||
+          error.code === 'ENOTFOUND' ||
+          error.code === 'ETIMEDOUT') {
+        return reply.code(503).send({ error: 'redis_unavailable' });
+      }
+      // Other queue errors - re-throw as 500
+      throw error;
+    }
+  }
+
+  return reply.send({ 
+    success: true,
+    prompt_id,
+    group_id,
+    job_ids 
+  });
+});
+
+// --- Legacy Batch: fan-out to multiple engines ---
 app.post('/api/v1/prompt-runs/batch', async (req, reply) => {
-  const { prompt, locale = 'US', session_id, engines = ['chatgpt', 'perplexity', 'gemini', 'google'] } = (req.body || {});
-  if (!prompt || !Array.isArray(engines) || engines.length === 0) {
-    return reply.code(400).send({ error: 'prompt and engines[] are required' });
+  const { 
+    prompt_id,
+    prompt_text, 
+    engines = ['chatgpt', 'perplexity', 'gemini', 'google'],
+    locale = 'US', 
+    website_id,
+    website_domain,
+    brand_name,
+    brand_aliases
+  } = (req.body || {});
+  
+  // Validate required fields
+  if (!prompt_id) return reply.code(400).send({ error: 'prompt_id is required' });
+  if (!prompt_text) return reply.code(400).send({ error: 'prompt_text is required' });
+  if (!Array.isArray(engines) || engines.length === 0) {
+    return reply.code(400).send({ error: 'engines[] array is required' });
   }
   if (!redisAvailable) return reply.code(503).send({ error: 'redis_unavailable' });
+
+  // Fetch website context from Supabase if not provided
+  let websiteContext = { website_domain, brand_name, brand_aliases };
+  if (website_id && (!website_domain || !brand_name)) {
+    const fetchedContext = await fetchWebsiteContext(website_id);
+    if (fetchedContext) {
+      websiteContext = { ...websiteContext, ...fetchedContext };
+    }
+  }
 
   const idem = (req.headers['idempotency-key'] || '').toString().trim();
   const user_id = req.user?.sub || null;
   const group_id = randomUUID();
   const job_ids = {};
+
+  // Build job payload with new format
+  const basePayload = {
+    prompt_id,
+    prompt_text,
+    locale,
+    website_id: website_id || null,
+    website_domain: websiteContext.website_domain || null,
+    brand_name: websiteContext.brand_name || null,
+    brand_aliases: websiteContext.brand_aliases || [],
+    user_id,
+    group_id,
+    created_at: Date.now()
+  };
 
   for (const eng of engines) {
     const q = queues[eng];
@@ -195,7 +443,7 @@ app.post('/api/v1/prompt-runs/batch', async (req, reply) => {
     try {
       // Create unique jobId by replacing colons with dashes
       const sanitizedIdem = idem.replace(/:/g, '-');
-      const job = await q.add('run', { prompt, engine: eng, locale, user_id, session_id, group_id }, {
+      const job = await q.add('run', { ...basePayload, engine: eng }, {
         jobId: idem ? `${sanitizedIdem}-${eng}` : undefined,
         attempts: 3,
         backoff: { type: 'exponential', delay: 2000 },
