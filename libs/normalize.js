@@ -81,43 +81,14 @@ const analyzeSentiment = (text, brandContext) => {
   return 'neutral';
 };
 
-// Extract ranking position from text
-const extractRankingPosition = (text, citations, brandContext) => {
-  if (!brandContext?.website_domain) return null;
-  
-  // Check citations for brand's website
-  const brandCitation = citations.findIndex(c => 
-    c.domain === brandContext.website_domain || 
-    c.url?.includes(brandContext.website_domain)
-  );
-  
-  if (brandCitation >= 0) return brandCitation + 1;
-  
-  // Check for explicit ranking mentions in text
-  const rankingPatterns = [
-    new RegExp(`(\\d+)[.,]?\\s+${brandContext.brand_name}`, 'i'),
-    new RegExp(`#(\\d+).*${brandContext.brand_name}`, 'i'),
-    new RegExp(`${brandContext.brand_name}.*ranked\\s+(\\d+)`, 'i')
-  ];
-  
-  for (const pattern of rankingPatterns) {
-    const match = text.match(pattern);
-    if (match) return parseInt(match[1]);
-  }
-  
-  return null;
-};
-
-// ============================================================================
-// NEW UNIVERSAL NORMALIZATION FUNCTION
-// ============================================================================
-
+/**
+ * Normalizes responses from different AI providers into a consistent format.
+ */
 export function normalizeResponse(engine, dataforseoResponse, brandContext, jobData = {}) {
   const startTime = Date.now();
   
   let answer_text = '';
   let answer_markdown = '';
-  let citations = [];
   let model = '';
   let apiCost = 0;
   
@@ -130,16 +101,6 @@ export function normalizeResponse(engine, dataforseoResponse, brandContext, jobD
       answer_markdown = result?.markdown || result?.items?.[0]?.markdown || '';
       answer_text = stripMarkdown(answer_markdown);
       
-      const sources = result?.sources || result?.items?.[0]?.sources || [];
-      citations = sources.map((source, idx) => ({
-        number: idx + 1,
-        url: source.url || '',
-        title: source.title || '',
-        domain: extractDomain(source.url || ''),
-        snippet: source.snippet || '',
-        is_own_website: extractDomain(source.url || '') === brandContext.website_domain
-      }));
-      
       model = result?.model || 'gpt-4o-mini';
       apiCost = task?.cost || 0;
     }
@@ -149,16 +110,6 @@ export function normalizeResponse(engine, dataforseoResponse, brandContext, jobD
       answer_text = removeThinkingTags(text);
       answer_markdown = answer_text;
       
-      const annotations = result?.items?.[0]?.sections?.[0]?.annotations || result?.annotations || [];
-      citations = annotations.map((ann, idx) => ({
-        number: idx + 1,
-        url: ann.url || '',
-        title: ann.title || '',
-        domain: extractDomain(ann.url || ''),
-        snippet: ann.snippet || '',
-        is_own_website: extractDomain(ann.url || '') === brandContext.website_domain
-      }));
-      
       model = result?.model || 'sonar-reasoning';
       apiCost = task?.cost || 0;
     }
@@ -167,35 +118,14 @@ export function normalizeResponse(engine, dataforseoResponse, brandContext, jobD
       answer_markdown = result?.markdown || result?.answer || '';
       answer_text = stripMarkdown(answer_markdown);
       
-      const sources = result?.sources || [];
-      citations = sources.map((source, idx) => ({
-        number: idx + 1,
-        url: source.url || '',
-        title: source.title || '',
-        domain: extractDomain(source.url || ''),
-        snippet: source.snippet || '',
-        is_own_website: extractDomain(source.url || '') === brandContext.website_domain
-      }));
-      
       model = result?.model || 'gemini-2.5-flash';
       apiCost = task?.cost || 0;
     }
     else if (engine === 'google') {
-      // Google AI Mode normalization - extract from nested items[0]
-      const aiOverview = result?.items?.[0];
-      answer_markdown = aiOverview?.markdown || '';
-      answer_text = stripMarkdown(answer_markdown);
-      
-      const references = aiOverview?.references || [];
-      citations = references.map((ref, idx) => ({
-        number: idx + 1,
-        url: ref.url || '',
-        title: ref.title || '',
-        domain: extractDomain(ref.url || ''),
-        snippet: ref.snippet || ref.text || '',
-        is_own_website: extractDomain(ref.url || '') === brandContext.website_domain
-      }));
-      
+      // Google AI (DataForSEO) response structure
+      const result = task.result[0];
+      answer_text = result?.items?.map(i => i.text).join('\n\n') || '';
+      answer_markdown = answer_text; // Google AI doesn't provide markdown
       model = result?.model || 'google-ai';
       apiCost = task?.cost || 0;
     }
@@ -203,7 +133,6 @@ export function normalizeResponse(engine, dataforseoResponse, brandContext, jobD
     // Brand mention analysis
     const was_mentioned = checkBrandMention(answer_text, brandContext);
     const sentiment = was_mentioned ? analyzeSentiment(answer_text, brandContext) : 'none';
-    const ranking_position = extractRankingPosition(answer_text, citations, brandContext);
     
   return {
       // Core fields
@@ -219,11 +148,6 @@ export function normalizeResponse(engine, dataforseoResponse, brandContext, jobD
       // Analysis fields
       was_mentioned,
       sentiment,
-      ranking_position,
-      
-      // Citation fields
-      total_citations: citations.length,
-      citations,
       
       // Provider fields
       provider: 'dataforseo',

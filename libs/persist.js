@@ -39,11 +39,6 @@ export async function saveTrackingResult(prompt_id, normalizedData) {
         // Analysis
         was_mentioned: normalizedData.was_mentioned,
         sentiment: normalizedData.sentiment,
-        ranking_position: normalizedData.ranking_position,
-        
-        // Citations (JSONB array - NOT separate table)
-        total_citations: normalizedData.total_citations,
-        citations: normalizedData.citations,
         
         // Provider
         provider: normalizedData.provider,
