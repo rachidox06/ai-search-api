@@ -1,6 +1,7 @@
 import { Worker } from 'bullmq';
 import { normalizeResponse } from './libs/normalize.js';
 import { saveTrackingResult } from './libs/persist.js';
+import { queueBrandExtraction } from './libs/brandQueue.js';
 
 const { REDIS_HOST, REDIS_PORT = 6379, REDIS_PASSWORD, DATAFORSEO_USERNAME, DATAFORSEO_PASSWORD } = process.env;
 
@@ -101,7 +102,15 @@ async function runJob(jobData){
   const saved = await saveTrackingResult(prompt_id, normalized);
   console.log('✅ Tracking result saved:', saved.id);
   
-  // 4. Return result
+  // 4. Queue brand extraction
+  await queueBrandExtraction(
+    saved.id,              // resultId
+    normalized.answer_text, // answerText
+    prompt_id,             // promptId
+    website_id             // websiteId
+  );
+  
+  // 5. Return result
   return {
     success: true,
     result_id: saved.id,
