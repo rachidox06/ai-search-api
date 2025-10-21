@@ -8,20 +8,7 @@ export const config = {
     port: parseInt(process.env.REDIS_PORT || '6379'),
     password: process.env.REDIS_PASSWORD,
     tls: process.env.REDIS_TLS === 'true' ? { rejectUnauthorized: false } : undefined,
-    maxRetriesPerRequest: null,      // Required for BullMQ
-    retryStrategy: (times: number) => {
-      // Exponential backoff with max delay of 5 seconds
-      const delay = Math.min(times * 500, 5000);
-      console.log(`[Redis] Retry attempt ${times}, waiting ${delay}ms`);
-      return delay;
-    },
-    enableReadyCheck: false,         // Skip ready check
-    enableOfflineQueue: true,
-    lazyConnect: false,              // Connect immediately
-    reconnectOnError: (err: Error) => {
-      console.error('[Redis] Connection error:', err.message);
-      return true; // Always try to reconnect
-    },
+    maxRetriesPerRequest: null,
   },
   
   // Queue configuration

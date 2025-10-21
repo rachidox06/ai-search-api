@@ -134,18 +134,6 @@ const worker = new Worker('prompt-perplexity', async job=>runJob(job.data), {
     password: REDIS_PASSWORD,
     tls: process.env.REDIS_TLS === 'true' ? { rejectUnauthorized: false } : undefined,
     maxRetriesPerRequest: null,
-    retryStrategy: (times) => {
-      const delay = Math.min(times * 500, 5000);
-      console.log(`[Redis] Retry attempt ${times}, waiting ${delay}ms`);
-      return delay;
-    },
-    enableReadyCheck: false,
-    enableOfflineQueue: true,
-    lazyConnect: false,
-    reconnectOnError: (err) => {
-      console.error('[Redis] Connection error:', err.message);
-      return true;
-    },
   },
   concurrency: 10
 });

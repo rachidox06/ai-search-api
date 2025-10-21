@@ -14,19 +14,7 @@ function getBrandQueue() {
         port: Number(REDIS_PORT),
         password: REDIS_PASSWORD,
         tls: REDIS_TLS === 'true' ? { rejectUnauthorized: false } : undefined,
-        maxRetriesPerRequest: null,      // Required for BullMQ
-        retryStrategy: (times) => {
-          const delay = Math.min(times * 500, 5000);
-          console.log(`[Redis] Retry attempt ${times}, waiting ${delay}ms`);
-          return delay;
-        },
-        enableReadyCheck: false,
-        enableOfflineQueue: true,
-        lazyConnect: false,
-        reconnectOnError: (err) => {
-          console.error('[Redis] Connection error:', err.message);
-          return true;
-        },
+        maxRetriesPerRequest: null,
       }
     });
     console.log('✅ Brand extraction queue initialized');
