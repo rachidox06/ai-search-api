@@ -23,12 +23,14 @@ if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY || !API_URL) {
   process.exit(1);
 }
 
-// Ensure API_URL has protocol
+// Ensure API_URL has protocol and remove trailing slash
 let apiUrl = API_URL;
 if (!apiUrl.startsWith('http://') && !apiUrl.startsWith('https://')) {
   apiUrl = `https://${apiUrl}`;
   console.log(`⚠️  Added https:// to API_URL: ${apiUrl}`);
 }
+// Remove trailing slash to prevent double slashes in URL construction
+apiUrl = apiUrl.replace(/\/$/, '');
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 const MAX_CALLS = parseInt(MAX_API_CALLS_PER_RUN);
