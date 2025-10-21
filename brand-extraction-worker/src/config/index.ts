@@ -29,7 +29,7 @@ export const config = {
   // Supabase configuration
   supabase: {
     url: process.env.SUPABASE_URL!,
-    serviceKey: process.env.SUPABASE_SERVICE_KEY!, // Use service role key
+    serviceKey: process.env.SUPABASE_SERVICE_ROLE_KEY!, // Use service role key
   },
   
   // Worker configuration
@@ -43,7 +43,7 @@ export const config = {
 const required = [
   'OPENAI_API_KEY',
   'SUPABASE_URL',
-  'SUPABASE_SERVICE_KEY',
+  'SUPABASE_SERVICE_ROLE_KEY',
   'REDIS_HOST'
 ];
 
