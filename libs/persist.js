@@ -38,7 +38,6 @@ export async function saveTrackingResult(prompt_id, normalizedData) {
         
         // Analysis
         was_mentioned: normalizedData.was_mentioned,
-        sentiment: normalizedData.sentiment,
         
         // Provider
         provider: normalizedData.provider,

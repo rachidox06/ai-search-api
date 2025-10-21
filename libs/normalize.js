@@ -52,35 +52,6 @@ const checkBrandMention = (text, brandContext) => {
   return aliases.some(alias => alias && lowerText.includes(alias));
 };
 
-// Analyze sentiment when brand is mentioned
-const analyzeSentiment = (text, brandContext) => {
-  if (!text || !brandContext) return 'neutral';
-  
-  const lowerText = text.toLowerCase();
-  const brandName = (brandContext.brand_name || '').toLowerCase();
-  
-  // Find context around brand mention
-  const brandIndex = lowerText.indexOf(brandName);
-  if (brandIndex === -1) return 'neutral';
-  
-  // Get 100 chars before and after brand mention
-  const contextStart = Math.max(0, brandIndex - 100);
-  const contextEnd = Math.min(lowerText.length, brandIndex + brandName.length + 100);
-  const context = lowerText.substring(contextStart, contextEnd);
-  
-  // Positive indicators
-  const positiveWords = ['best', 'great', 'excellent', 'top', 'leading', 'innovative', 'recommended', 'popular', 'trusted', 'quality'];
-  const positiveCount = positiveWords.filter(word => context.includes(word)).length;
-  
-  // Negative indicators
-  const negativeWords = ['worst', 'bad', 'poor', 'avoid', 'issue', 'problem', 'difficult', 'disappointing'];
-  const negativeCount = negativeWords.filter(word => context.includes(word)).length;
-  
-  if (positiveCount > negativeCount && positiveCount > 0) return 'positive';
-  if (negativeCount > positiveCount && negativeCount > 0) return 'negative';
-  return 'neutral';
-};
-
 /**
  * Normalizes responses from different AI providers into a consistent format.
  */
@@ -132,7 +103,6 @@ export function normalizeResponse(engine, dataforseoResponse, brandContext, jobD
     
     // Brand mention analysis
     const was_mentioned = checkBrandMention(answer_text, brandContext);
-    const sentiment = was_mentioned ? analyzeSentiment(answer_text, brandContext) : 'none';
     
   return {
       // Core fields
@@ -147,7 +117,6 @@ export function normalizeResponse(engine, dataforseoResponse, brandContext, jobD
       
       // Analysis fields
       was_mentioned,
-      sentiment,
       
       // Provider fields
       provider: 'dataforseo',
