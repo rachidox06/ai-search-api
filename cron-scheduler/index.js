@@ -23,6 +23,13 @@ if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY || !API_URL) {
   process.exit(1);
 }
 
+// Ensure API_URL has protocol
+let apiUrl = API_URL;
+if (!apiUrl.startsWith('http://') && !apiUrl.startsWith('https://')) {
+  apiUrl = `https://${apiUrl}`;
+  console.log(`⚠️  Added https:// to API_URL: ${apiUrl}`);
+}
+
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 const MAX_CALLS = parseInt(MAX_API_CALLS_PER_RUN);
 const ENGINES = ['chatgpt', 'perplexity', 'gemini', 'google'];
@@ -34,7 +41,7 @@ console.log('====================================');
 console.log(`📅 Schedule: ${CRON_SCHEDULE}`);
 console.log(`🔢 Max API calls per run: ${MAX_CALLS}`);
 console.log(`📝 Max prompts per run: ${MAX_PROMPTS} (${ENGINES_PER_PROMPT} engines each)`);
-console.log(`🎯 API URL: ${API_URL}`);
+console.log(`🎯 API URL: ${apiUrl}`);
 console.log(`🧪 Dry run: ${DRY_RUN === 'true' ? 'YES (no API calls)' : 'NO'}`);
 console.log('====================================\n');
 
@@ -109,7 +116,7 @@ async function processPrompt(prompt) {
       };
     }
     
-    const response = await fetch(`${API_URL}/api/v1/prompt-runs/batch`, {
+    const response = await fetch(`${apiUrl}/api/v1/prompt-runs/batch`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
