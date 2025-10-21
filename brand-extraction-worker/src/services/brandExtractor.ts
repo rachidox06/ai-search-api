@@ -11,18 +11,18 @@ Return ONLY a JSON array of objects (no prose, no code fences). Each object must
 
 [
   {
-    "name": "Brand name exactly as written in the text",
-    "website": "Official homepage URL (null if unknown)",
+    "name": "Company or brand name (not product name)",
     "sentiment": 0-100 integer score reflecting how positively the brand is portrayed (0 = very negative, 50 = neutral, 100 = very positive),
     "ranking_position": integer representing the 1-based order of appearance of the brand in the answer text (first occurrence = 1)
   }
 ]
 
 Rules:
-- Preserve capitalization from the text for the "name" field.
-- Merge duplicate or variant mentions into a single entry using the most canonical name found.
+- For "name", always use the company or parent brand name, NOT the product name.
+  * Example: If "iPhone" is mentioned, extract "Apple" (not "iPhone")
+  * Example: If "HubSpot CRM" is mentioned, extract "HubSpot" (not "HubSpot CRM")
+- Merge duplicate or variant mentions into a single entry using the most canonical company name.
 - Estimate sentiment from the surrounding context; use 50 if tone is neutral or ambiguous.
-- For "website", use the official homepage if mentioned or infer the best-known homepage; otherwise set to null.
 - "ranking_position" must reflect the first mention order within the text.
 - Exclude generic terms, product categories, and people.
 

@@ -7,7 +7,6 @@ export interface BrandExtractionJob {
 
 export interface ExtractedBrand {
   name: string;
-  website: string | null;
   sentiment: number;          // 0-100
   ranking_position: number;   // Order of appearance
 }
