@@ -36,9 +36,6 @@ export async function saveTrackingResult(prompt_id, normalizedData) {
         answer_markdown: normalizedData.answer_markdown,
         answer_length: normalizedData.answer_length,
         
-        // Analysis
-        was_mentioned: normalizedData.was_mentioned,
-        
         // Provider
         provider: normalizedData.provider,
         cost: normalizedData.cost,

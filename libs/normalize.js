@@ -41,19 +41,9 @@ const removeThinkingTags = (text) => {
   return text.replace(/<thinking>[\s\S]*?<\/thinking>/gi, '').trim();
 };
 
-// Check if brand was mentioned (name or aliases)
-const checkBrandMention = (text, brandContext) => {
-  if (!text || !brandContext) return false;
-  const lowerText = text.toLowerCase();
-  const brandName = (brandContext.brand_name || '').toLowerCase();
-  const aliases = (brandContext.brand_aliases || []).map(a => a.toLowerCase());
-  
-  if (brandName && lowerText.includes(brandName)) return true;
-  return aliases.some(alias => alias && lowerText.includes(alias));
-};
-
 /**
  * Normalizes responses from different AI providers into a consistent format.
+ * - Extracts core content (text, markdown)
  */
 export function normalizeResponse(engine, dataforseoResponse, brandContext, jobData = {}) {
   const startTime = Date.now();
@@ -102,7 +92,6 @@ export function normalizeResponse(engine, dataforseoResponse, brandContext, jobD
     }
     
     // Brand mention analysis
-    const was_mentioned = checkBrandMention(answer_text, brandContext);
     
   return {
       // Core fields
@@ -114,9 +103,6 @@ export function normalizeResponse(engine, dataforseoResponse, brandContext, jobD
       answer_text,
       answer_markdown,
       answer_length: answer_text.length,
-      
-      // Analysis fields
-      was_mentioned,
       
       // Provider fields
       provider: 'dataforseo',
