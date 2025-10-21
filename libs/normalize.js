@@ -52,6 +52,7 @@ export function normalizeResponse(engine, dataforseoResponse, brandContext, jobD
   let answer_markdown = '';
   let model = '';
   let apiCost = 0;
+  const extra = {};
   
   try {
     const task = dataforseoResponse?.tasks?.[0];
@@ -170,9 +171,6 @@ export function normalizeResponse(engine, dataforseoResponse, brandContext, jobD
       model = result?.model || 'google-ai';
       apiCost = task?.cost || 0;
     }
-
-    // Prepare extra data based on engine
-    const extra = {};
 
     // For Google: Add citations if extracted
     if (engine === 'google') {
