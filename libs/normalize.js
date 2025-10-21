@@ -52,14 +52,6 @@ const checkBrandMention = (text, brandContext) => {
   return aliases.some(alias => alias && lowerText.includes(alias));
 };
 
-// Check if explicit brand name was mentioned (not just domain)
-const checkExplicitBrandName = (text, brandContext) => {
-  if (!text || !brandContext?.brand_name) return false;
-  const lowerText = text.toLowerCase();
-  const brandName = brandContext.brand_name.toLowerCase();
-  return lowerText.includes(brandName);
-};
-
 // Analyze sentiment when brand is mentioned
 const analyzeSentiment = (text, brandContext) => {
   if (!text || !brandContext) return 'neutral';
@@ -210,7 +202,6 @@ export function normalizeResponse(engine, dataforseoResponse, brandContext, jobD
     
     // Brand mention analysis
     const was_mentioned = checkBrandMention(answer_text, brandContext);
-    const brand_mentioned = checkExplicitBrandName(answer_text, brandContext);
     const sentiment = was_mentioned ? analyzeSentiment(answer_text, brandContext) : 'none';
     const ranking_position = extractRankingPosition(answer_text, citations, brandContext);
     
@@ -227,7 +218,6 @@ export function normalizeResponse(engine, dataforseoResponse, brandContext, jobD
       
       // Analysis fields
       was_mentioned,
-      brand_mentioned,
       sentiment,
       ranking_position,
       
