@@ -129,16 +129,15 @@ new Worker('prompt-chatgpt', async job => runJob(job.data), {
     port: Number(REDIS_PORT),
     password: REDIS_PASSWORD,
     tls: process.env.REDIS_TLS === 'true' ? { rejectUnauthorized: false } : undefined,
-    connectTimeout: 30000,
     maxRetriesPerRequest: null,
     retryStrategy: (times) => {
       const delay = Math.min(times * 500, 5000);
       console.log(`[Redis] Retry attempt ${times}, waiting ${delay}ms`);
       return delay;
     },
-    keepAlive: 30000,
-    enableReadyCheck: true,
+    enableReadyCheck: false,
     enableOfflineQueue: true,
+    lazyConnect: false,
     reconnectOnError: (err) => {
       console.error('[Redis] Connection error:', err.message);
       return true;
