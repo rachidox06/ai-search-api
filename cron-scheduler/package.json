@@ -1,0 +1,17 @@
+{
+  "name": "ai-search-cron-scheduler",
+  "version": "1.0.0",
+  "description": "Daily cron job to refresh all active prompts",
+  "type": "module",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node index.js"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.39.0",
+    "node-cron": "^3.0.3",
+    "dotenv": "^16.3.1"
+  }
+}
+
