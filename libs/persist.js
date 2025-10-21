@@ -23,28 +23,36 @@ console.log('✅ Supabase client initialized successfully');
 
 export async function saveTrackingResult(prompt_id, normalizedData) {
   try {
+    // Prepare the data to insert
+    const insertData = {
+      prompt_id,
+      engine: normalizedData.engine,
+      model: normalizedData.model,
+      checked_at: normalizedData.checked_at,
+
+      // Content
+      answer_text: normalizedData.answer_text,
+      answer_markdown: normalizedData.answer_markdown,
+      answer_length: normalizedData.answer_length,
+
+      // Provider
+      provider: normalizedData.provider,
+      cost: normalizedData.cost,
+      provider_raw: normalizedData.provider_raw,
+
+      // Metadata & extra
+      metadata: normalizedData.metadata,
+      extra: normalizedData.extra
+    };
+
+    // Add citations if they exist in extra (for engines that support it)
+    if (normalizedData.extra?.citations) {
+      insertData.citations = normalizedData.extra.citations;
+    }
+
     const { data, error } = await supabase
       .from('prompt_tracking_results')
-      .insert({
-        prompt_id,
-        engine: normalizedData.engine,
-        model: normalizedData.model,
-        checked_at: normalizedData.checked_at,
-        
-        // Content
-        answer_text: normalizedData.answer_text,
-        answer_markdown: normalizedData.answer_markdown,
-        answer_length: normalizedData.answer_length,
-        
-        // Provider
-        provider: normalizedData.provider,
-        cost: normalizedData.cost,
-        provider_raw: normalizedData.provider_raw,
-        
-        // Metadata & extra
-        metadata: normalizedData.metadata,
-        extra: normalizedData.extra
-      })
+      .insert(insertData)
       .select()
       .single();
     

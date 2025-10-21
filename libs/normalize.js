@@ -84,40 +84,113 @@ export function normalizeResponse(engine, dataforseoResponse, brandContext, jobD
     }
     else if (engine === 'google') {
       // Google AI (DataForSEO) response structure
-      const result = task.result[0];
-      answer_text = result?.items?.map(i => i.text).join('\n\n') || '';
-      answer_markdown = answer_text; // Google AI doesn't provide markdown
+      // Response has result.markdown with full formatted answer
+      // And result.items[0].items[] array with individual elements
+
+      // Primary: Use the full markdown field (contains complete formatted response)
+      answer_markdown = result?.markdown || '';
+
+      // Fallback: If no markdown, try to extract from nested items structure
+      if (!answer_markdown && result?.items?.[0]?.items) {
+        const elements = result.items[0].items;
+        // Extract text from nested ai_overview_element items
+        answer_text = elements.map(el => el.text || '').filter(Boolean).join('\n\n');
+        answer_markdown = elements.map(el => el.markdown || el.text || '').filter(Boolean).join('\n\n');
+      } else {
+        // Strip markdown to get plain text
+        answer_text = stripMarkdown(answer_markdown);
+      }
+
       model = result?.model || 'google-ai';
       apiCost = task?.cost || 0;
     }
-    
+
+    // Prepare extra data based on engine
+    const extra = {};
+
+    // For Google: Add citations if extracted
+    if (engine === 'google') {
+      // Extract citations/references from Google AI response
+      // References can appear at two levels:
+      // 1. Overview level: result.items[0].references
+      // 2. Element level: result.items[0].items[].references
+      const citations = [];
+      const seenUrls = new Set();
+
+      if (result?.items?.[0]) {
+        const overview = result.items[0];
+
+        // Collect overview-level references
+        if (overview.references && Array.isArray(overview.references)) {
+          overview.references.forEach(ref => {
+            if (ref.url && !seenUrls.has(ref.url)) {
+              seenUrls.add(ref.url);
+              citations.push({
+                url: ref.url,
+                title: ref.title || '',
+                domain: ref.domain || '',
+                source: ref.source || '',
+                text: ref.text || ''
+              });
+            }
+          });
+        }
+
+        // Collect element-level references
+        if (overview.items && Array.isArray(overview.items)) {
+          overview.items.forEach(item => {
+            if (item.references && Array.isArray(item.references)) {
+              item.references.forEach(ref => {
+                if (ref.url && !seenUrls.has(ref.url)) {
+                  seenUrls.add(ref.url);
+                  citations.push({
+                    url: ref.url,
+                    title: ref.title || '',
+                    domain: ref.domain || '',
+                    source: ref.source || '',
+                    text: ref.text || ''
+                  });
+                }
+              });
+            }
+          });
+        }
+      }
+
+      // Add citations to extra if found
+      if (citations.length > 0) {
+        extra.citations = citations;
+        extra.citations_count = citations.length;
+      }
+    }
+
     // Brand mention analysis
-    
+
   return {
       // Core fields
       engine,
       model,
       checked_at: new Date().toISOString(),
-      
+
       // Content fields
       answer_text,
       answer_markdown,
       answer_length: answer_text.length,
-      
+
       // Provider fields
       provider: 'dataforseo',
       cost: apiCost,
       provider_raw: dataforseoResponse,
-      
+
       // Metadata
       metadata: {
         locale: jobData.locale || 'US',
         execution_time_ms: Date.now() - startTime,
         api_version: 'v3'
       },
-      
+
       // Extra (for engine-specific data)
-      extra: {}
+      extra
     };
   } catch (error) {
     console.error('❌ Normalization error:', error);
