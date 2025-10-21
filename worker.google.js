@@ -121,7 +121,26 @@ async function runJob(jobData){
   };
 }
 const worker = new Worker('prompt-google', async job=>runJob(job.data), { 
-  connection: { host:REDIS_HOST, port:Number(REDIS_PORT), password:REDIS_PASSWORD },
+  connection: {
+    host: REDIS_HOST,
+    port: Number(REDIS_PORT),
+    password: REDIS_PASSWORD,
+    tls: process.env.REDIS_TLS === 'true' ? { rejectUnauthorized: false } : undefined,
+    connectTimeout: 30000,
+    maxRetriesPerRequest: null,
+    retryStrategy: (times) => {
+      const delay = Math.min(times * 500, 5000);
+      console.log(`[Redis] Retry attempt ${times}, waiting ${delay}ms`);
+      return delay;
+    },
+    keepAlive: 30000,
+    enableReadyCheck: true,
+    enableOfflineQueue: true,
+    reconnectOnError: (err) => {
+      console.error('[Redis] Connection error:', err.message);
+      return true;
+    },
+  },
   concurrency: 10
 });
 

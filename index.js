@@ -24,7 +24,30 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
 const hasRedis = Boolean(REDIS_HOST);
 const connection = hasRedis
-  ? { host: REDIS_HOST, port: Number(REDIS_PORT), password: REDIS_PASSWORD }
+  ? {
+      host: REDIS_HOST,
+      port: Number(REDIS_PORT),
+      password: REDIS_PASSWORD,
+      tls: process.env.REDIS_TLS === 'true' ? { rejectUnauthorized: false } : undefined,
+      // Connection resilience settings
+      connectTimeout: 30000,           // 30 seconds to connect
+      maxRetriesPerRequest: null,      // Required for BullMQ
+      retryStrategy: (times) => {
+        // Exponential backoff with max delay of 5 seconds
+        const delay = Math.min(times * 500, 5000);
+        console.log(`[Redis] Retry attempt ${times}, waiting ${delay}ms`);
+        return delay;
+      },
+      // Keep connection alive
+      keepAlive: 30000,                // Send keepalive every 30 seconds
+      enableReadyCheck: true,
+      enableOfflineQueue: true,
+      // Reconnection settings
+      reconnectOnError: (err) => {
+        console.error('[Redis] Connection error:', err.message);
+        return true; // Always try to reconnect
+      },
+    }
   : null;
 
 // Test Redis connectivity on startup

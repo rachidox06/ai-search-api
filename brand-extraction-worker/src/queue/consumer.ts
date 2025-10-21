@@ -6,11 +6,9 @@ import { processBrandExtraction } from './processor';
 
 export function createWorker(): Worker<BrandExtractionJob> {
   const connection = new Redis({
-    host: config.redis.host,
-    port: config.redis.port,
-    password: config.redis.password,
-    tls: config.redis.tls,
-    maxRetriesPerRequest: null, // Required for BullMQ
+    ...config.redis,
+    // Override maxRetriesPerRequest for worker (must be null for BullMQ)
+    maxRetriesPerRequest: null,
   });
   
   const worker = new Worker<BrandExtractionJob>(

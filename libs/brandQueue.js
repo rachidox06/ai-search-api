@@ -1,6 +1,6 @@
 import { Queue } from 'bullmq';
 
-const { REDIS_HOST, REDIS_PORT = 6379, REDIS_PASSWORD } = process.env;
+const { REDIS_HOST, REDIS_PORT = 6379, REDIS_PASSWORD, REDIS_TLS } = process.env;
 
 // Create brand extraction queue (shared by all workers)
 let brandExtractionQueue = null;
@@ -12,7 +12,26 @@ function getBrandQueue() {
       connection: {
         host: REDIS_HOST,
         port: Number(REDIS_PORT),
-        password: REDIS_PASSWORD
+        password: REDIS_PASSWORD,
+        tls: REDIS_TLS === 'true' ? { rejectUnauthorized: false } : undefined,
+        // Connection resilience settings
+        connectTimeout: 30000,           // 30 seconds to connect
+        maxRetriesPerRequest: null,      // Required for BullMQ
+        retryStrategy: (times) => {
+          // Exponential backoff with max delay of 5 seconds
+          const delay = Math.min(times * 500, 5000);
+          console.log(`[Redis] Retry attempt ${times}, waiting ${delay}ms`);
+          return delay;
+        },
+        // Keep connection alive
+        keepAlive: 30000,                // Send keepalive every 30 seconds
+        enableReadyCheck: true,
+        enableOfflineQueue: true,
+        // Reconnection settings
+        reconnectOnError: (err) => {
+          console.error('[Redis] Connection error:', err.message);
+          return true; // Always try to reconnect
+        },
       }
     });
     console.log('✅ Brand extraction queue initialized');
