@@ -116,7 +116,7 @@ async function processPrompt(prompt) {
       };
     }
     
-    const response = await fetch(`${apiUrl}/api/v1/prompt-runs/batch`, {
+    const response = await fetch(`${apiUrl}/api/v1/tracking/batch`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
