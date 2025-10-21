@@ -64,6 +64,35 @@ export function normalizeResponse(engine, dataforseoResponse, brandContext, jobD
       
       model = result?.model || 'gpt-4o-mini';
       apiCost = task?.cost || 0;
+      
+      // Extract citations from ChatGPT response
+      // DataForSEO might provide citations/sources/references at different levels
+      const sourcesData = result?.sources || result?.references || result?.citations || 
+                         result?.items?.[0]?.sources || result?.items?.[0]?.references || [];
+      
+      if (sourcesData && Array.isArray(sourcesData) && sourcesData.length > 0) {
+        const citations = [];
+        const seenUrls = new Set();
+        
+        sourcesData.forEach((source, index) => {
+          const url = source.url || source.uri || source.link;
+          if (url && !seenUrls.has(url)) {
+            seenUrls.add(url);
+            citations.push({
+              number: index + 1,
+              url: url,
+              title: source.title || '',
+              domain: extractDomain(url),
+              text: source.text || source.snippet || source.description || ''
+            });
+          }
+        });
+        
+        if (citations.length > 0) {
+          extra.citations = citations;
+          extra.citations_count = citations.length;
+        }
+      }
     }
     else if (engine === 'perplexity') {
       // Perplexity from llm_responses
@@ -73,6 +102,31 @@ export function normalizeResponse(engine, dataforseoResponse, brandContext, jobD
       
       model = result?.model || 'sonar-reasoning';
       apiCost = task?.cost || 0;
+      
+      // Extract citations from Perplexity response
+      if (result?.citations && Array.isArray(result.citations) && result.citations.length > 0) {
+        const citations = [];
+        const seenUrls = new Set();
+        
+        result.citations.forEach((citation, index) => {
+          const url = citation.url || citation.uri;
+          if (url && !seenUrls.has(url)) {
+            seenUrls.add(url);
+            citations.push({
+              number: index + 1,
+              url: url,
+              title: citation.title || '',
+              domain: extractDomain(url),
+              text: citation.text || citation.snippet || ''
+            });
+          }
+        });
+        
+        if (citations.length > 0) {
+          extra.citations = citations;
+          extra.citations_count = citations.length;
+        }
+      }
     }
     else if (engine === 'gemini') {
       // Gemini normalization
@@ -81,6 +135,18 @@ export function normalizeResponse(engine, dataforseoResponse, brandContext, jobD
       
       model = result?.model || 'gemini-2.5-flash';
       apiCost = task?.cost || 0;
+      
+      // Extract citations from Gemini response
+      if (result?.citations && Array.isArray(result.citations) && result.citations.length > 0) {
+        extra.citations = result.citations.map(citation => ({
+          number: citation.number,
+          url: citation.url,
+          title: citation.title || '',
+          text: citation.text || '',
+          domain: extractDomain(citation.url)
+        }));
+        extra.citations_count = extra.citations.length;
+      }
     }
     else if (engine === 'google') {
       // Google AI (DataForSEO) response structure

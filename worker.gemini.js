@@ -125,6 +125,7 @@ async function runJob(jobData) {
         markdown: result.enhancedText || result.text,
         answer: result.text,
         sources: result.sources,
+        citations: result.citations,
         model: 'gemini-2.5-flash'
       }]
     }]

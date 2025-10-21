@@ -83,6 +83,12 @@ async function runJob(jobData){
   const perplexityResponse = await queryPerplexity(prompt_text);
   console.log('✅ Perplexity API response received');
 
+  // Extract citations from Perplexity response
+  const citations = perplexityResponse?.choices?.[0]?.message?.citations || [];
+  const citationsArray = Array.isArray(citations) ? citations : [];
+  
+  console.log('📚 Citations found:', citationsArray.length);
+
   // Convert to DataForSEO format if needed
   const dataforseoFormat = perplexityResponse.tasks ? perplexityResponse : {
     tasks: [{
@@ -90,7 +96,7 @@ async function runJob(jobData){
       result: [{
         text: extractAnswer(perplexityResponse),
         items: perplexityResponse.items,
-        annotations: perplexityResponse.annotations,
+        citations: citationsArray,
         model: perplexityResponse.model
       }]
     }]
