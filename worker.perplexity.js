@@ -13,20 +13,6 @@ async function queryPerplexity(prompt, model = 'sonar') {
 
   const url = 'https://api.perplexity.ai/chat/completions';
 
-  const payload = {
-    model: model,
-    search_mode: 'web',
-    messages: [
-      {
-        role: 'system',
-        content: 'Provide detailed, well-researched answers and include citations to sources whenever possible.'
-      },
-      {
-        role: 'user',
-        content: prompt
-      }
-    ]
-  };
 
   const response = await fetch(url, {
     method: 'POST',

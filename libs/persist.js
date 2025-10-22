@@ -23,6 +23,18 @@ console.log('✅ Supabase client initialized successfully');
 
 export async function saveTrackingResult(prompt_id, normalizedData) {
   try {
+    // Add citations if they exist in extra (for engines that support it)
+    let citations = null;
+    if (normalizedData.extra?.citations) {
+      citations = normalizedData.extra.citations;
+    }
+
+    // Remove citations from extra to avoid duplication
+    // Citations will be stored in dedicated 'citations' column
+    const extraWithoutCitations = { ...normalizedData.extra };
+    delete extraWithoutCitations.citations;
+    delete extraWithoutCitations.citations_count;
+
     // Prepare the data to insert
     const insertData = {
       prompt_id,
@@ -40,15 +52,13 @@ export async function saveTrackingResult(prompt_id, normalizedData) {
       cost: normalizedData.cost,
       provider_raw: normalizedData.provider_raw,
 
-      // Metadata & extra
+      // Metadata & extra (without citations to avoid duplication)
       metadata: normalizedData.metadata,
-      extra: normalizedData.extra
+      extra: extraWithoutCitations,
+      
+      // Citations in dedicated column
+      citations: citations
     };
-
-    // Add citations if they exist in extra (for engines that support it)
-    if (normalizedData.extra?.citations) {
-      insertData.citations = normalizedData.extra.citations;
-    }
 
     const { data, error } = await supabase
       .from('prompt_tracking_results')
