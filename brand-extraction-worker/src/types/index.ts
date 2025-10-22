@@ -7,6 +7,7 @@ export interface BrandExtractionJob {
 
 export interface ExtractedBrand {
   name: string;
+  domain: string;             // Primary domain for the brand
   sentiment: number;          // 0-100
   ranking_position: number;   // Order of appearance
 }

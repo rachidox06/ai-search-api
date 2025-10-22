@@ -12,6 +12,7 @@ Return ONLY a JSON array of objects (no prose, no code fences). Each object must
 [
   {
     "name": "Company or brand name (not product name)",
+    "domain": "Primary domain name for this brand or company (e.g., apple.com, hubspot.com)",
     "sentiment": 0-100 integer score reflecting how positively the brand is portrayed (0 = very negative, 50 = neutral, 100 = very positive),
     "ranking_position": integer representing the 1-based order of appearance of the brand in the answer text (first occurrence = 1)
   }
@@ -21,6 +22,10 @@ Rules:
 - For "name", always use the company or parent brand name, NOT the product name.
   * Example: If "iPhone" is mentioned, extract "Apple" (not "iPhone")
   * Example: If "HubSpot CRM" is mentioned, extract "HubSpot" (not "HubSpot CRM")
+- For "domain", provide the primary website domain for the brand or company (without https:// or www).
+  * Example: "Apple" → "apple.com"
+  * Example: "HubSpot" → "hubspot.com"
+- **Do NOT extract celebrities or individual people - only extract actual companies and brands.**
 - Merge duplicate or variant mentions into a single entry using the most canonical company name.
 - Estimate sentiment from the surrounding context; use 50 if tone is neutral or ambiguous.
 - "ranking_position" must reflect the first mention order within the text.
@@ -105,6 +110,8 @@ export class BrandExtractorService {
       return parsed.filter((item: any) => 
         item.name && 
         typeof item.name === 'string' &&
+        item.domain &&
+        typeof item.domain === 'string' &&
         typeof item.sentiment === 'number' &&
         typeof item.ranking_position === 'number'
       );
