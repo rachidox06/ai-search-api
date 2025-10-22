@@ -155,16 +155,29 @@ export function normalizeResponse(engine, dataforseoResponse, brandContext, jobD
       model = result?.model || 'gemini-2.5-flash';
       apiCost = task?.cost || 0;
       
-      // Extract citations from Gemini response
+      // Extract citations from Gemini response (deduplicate by URL)
       if (result?.citations && Array.isArray(result.citations) && result.citations.length > 0) {
-        extra.citations = result.citations.map(citation => ({
-          number: citation.number,
-          url: citation.url,
-          title: citation.title || '',
-          text: citation.text || '',
-          domain: extractDomain(citation.url)
-        }));
-        extra.citations_count = extra.citations.length;
+        const citations = [];
+        const seenUrls = new Set();
+        
+        result.citations.forEach((citation, index) => {
+          const url = citation.url;
+          if (url && !seenUrls.has(url)) {
+            seenUrls.add(url);
+            citations.push({
+              number: citations.length + 1, // Renumber after deduplication
+              url: url,
+              title: citation.title || '',
+              text: citation.text || '',
+              domain: extractDomain(url)
+            });
+          }
+        });
+        
+        if (citations.length > 0) {
+          extra.citations = citations;
+          extra.citations_count = citations.length;
+        }
       }
     }
     else if (engine === 'google') {
