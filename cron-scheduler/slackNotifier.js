@@ -101,4 +101,3 @@ export async function sendCronSummary(summary) {
     return false;
   }
 }
-

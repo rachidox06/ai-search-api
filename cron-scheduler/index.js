@@ -2,7 +2,7 @@
 import cron from 'node-cron';
 import { createClient } from '@supabase/supabase-js';
 import dotenv from 'dotenv';
-import { sendCronSummary } from '../libs/slackNotifier.js';
+import { sendCronSummary } from './slackNotifier.js';
 
 dotenv.config();
 
@@ -10,7 +10,7 @@ const {
   SUPABASE_URL,
   SUPABASE_SERVICE_ROLE_KEY,
   API_URL,
-  CRON_SCHEDULE = '0 10 * * *', // Default: 10 AM daily (sends Slack summary)
+  CRON_SCHEDULE = '0 2 * * *', // Default: 2 AM daily
   MAX_API_CALLS_PER_RUN = '500',
   DRY_RUN = 'false'
 } = process.env;
