@@ -2,6 +2,7 @@
 import cron from 'node-cron';
 import { createClient } from '@supabase/supabase-js';
 import dotenv from 'dotenv';
+import { sendCronSummary } from '../libs/slackNotifier.js';
 
 dotenv.config();
 
@@ -9,7 +10,7 @@ const {
   SUPABASE_URL,
   SUPABASE_SERVICE_ROLE_KEY,
   API_URL,
-  CRON_SCHEDULE = '0 2 * * *', // Default: 2 AM daily
+  CRON_SCHEDULE = '0 10 * * *', // Default: 10 AM daily (sends Slack summary)
   MAX_API_CALLS_PER_RUN = '500',
   DRY_RUN = 'false'
 } = process.env;
@@ -203,6 +204,17 @@ async function runDailyCron() {
     console.log(`📞 API calls used: ${apiCallsUsed}/${MAX_CALLS}`);
     console.log(`⏱️  Duration: ${duration}s`);
     console.log('====================================\n');
+    
+    // Send summary to Slack
+    await sendCronSummary({
+      date: new Date().toISOString().split('T')[0],
+      total_prompts: prompts.length,
+      successful,
+      failed,
+      duration,
+      api_calls_used: apiCallsUsed,
+      max_api_calls: MAX_CALLS
+    });
     
   } catch (error) {
     console.error('\n❌ Cron job failed:', error.message);
