@@ -101,24 +101,42 @@ export function normalizeResponse(engine, dataforseoResponse, brandContext, jobD
       answer_text = removeThinkingTags(text);
       answer_markdown = answer_text;
       
-      model = result?.model || 'sonar-reasoning';
+      model = result?.model || 'sonar';
       apiCost = task?.cost || 0;
       
       // Extract citations from Perplexity response
+      // Perplexity returns citations as an array of URLs at top level
+      // And search_results with detailed metadata
       if (result?.citations && Array.isArray(result.citations) && result.citations.length > 0) {
         const citations = [];
         const seenUrls = new Set();
         
+        // Create a lookup map from search_results for richer data
+        const searchResultsMap = {};
+        if (result?.search_results && Array.isArray(result.search_results)) {
+          result.search_results.forEach(sr => {
+            if (sr.url) {
+              searchResultsMap[sr.url] = sr;
+            }
+          });
+        }
+        
+        // Process citations (which are just URL strings)
         result.citations.forEach((citation, index) => {
-          const url = citation.url || citation.uri;
+          const url = typeof citation === 'string' ? citation : (citation.url || citation.uri);
           if (url && !seenUrls.has(url)) {
             seenUrls.add(url);
+            
+            // Try to enrich with search_results data
+            const searchResult = searchResultsMap[url];
+            
             citations.push({
               number: index + 1,
               url: url,
-              title: citation.title || '',
+              title: searchResult?.title || '',
               domain: extractDomain(url),
-              text: citation.text || citation.snippet || ''
+              text: searchResult?.snippet || '',
+              source: searchResult?.source || 'web'
             });
           }
         });
