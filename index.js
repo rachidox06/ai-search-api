@@ -49,15 +49,28 @@ if (hasRedis) {
 }
 
 // Per-engine queues (must match worker queue names)
-const queues = redisAvailable
-  ? {
-      chatgpt:    new BullQueue('prompt-chatgpt',    { connection }),
-      perplexity: new BullQueue('prompt-perplexity', { connection }),
-      gemini:     new BullQueue('prompt-gemini',     { connection }),
-      google:     new BullQueue('prompt-google',     { connection }),
-      claude:     new BullQueue('prompt-claude',     { connection }),
+// Initialize queues safely to prevent any single queue failure from breaking others
+const queues = {};
+
+if (redisAvailable) {
+  const queueConfigs = {
+    chatgpt:    'prompt-chatgpt',
+    perplexity: 'prompt-perplexity',
+    gemini:     'prompt-gemini',
+    google:     'prompt-google',
+    claude:     'prompt-claude',
+  };
+
+  for (const [engine, queueName] of Object.entries(queueConfigs)) {
+    try {
+      queues[engine] = new BullQueue(queueName, { connection });
+      console.log(`✅ Queue initialized: ${engine} (${queueName})`);
+    } catch (error) {
+      console.error(`❌ Failed to initialize queue for ${engine}:`, error.message);
+      queues[engine] = null; // Mark as unavailable
     }
-  : {};
+  }
+}
 
 const app = Fastify({ logger: true });
 
@@ -290,9 +303,24 @@ app.post('/api/v1/prompt-runs', async (req, reply) => {
     created_at: Date.now()
   };
 
-  // Push to the engine's queue
+  // Check if engine is supported and queue is available
+  const supportedEngines = ['chatgpt', 'perplexity', 'gemini', 'google', 'claude'];
+  if (!supportedEngines.includes(engine)) {
+    console.log(`❌ Engine not in supported list: ${engine}`);
+    return reply.code(400).send({ error: `unsupported engine: ${engine}` });
+  }
+
+  // Check if Redis is available
+  if (!hasRedis) {
+    console.log(`❌ Redis not available for engine: ${engine}`);
+    return reply.code(503).send({ error: 'redis_unavailable' });
+  }
+
   const q = queues[engine];
-  if (!q) return reply.code(400).send({ error: `unsupported engine: ${engine}` });
+  if (!q) {
+    console.log(`❌ Queue not initialized for supported engine: ${engine}, redisAvailable: ${redisAvailable}`);
+    return reply.code(500).send({ error: `queue_initialization_failed: ${engine}` });
+  }
 
   try {
     const idem = (req.headers['idempotency-key'] || '').toString().trim();
