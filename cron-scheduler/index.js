@@ -35,8 +35,8 @@ apiUrl = apiUrl.replace(/\/$/, '');
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 const MAX_CALLS = parseInt(MAX_API_CALLS_PER_RUN);
-const ENGINES = ['chatgpt', 'perplexity', 'gemini', 'google'];
-const ENGINES_PER_PROMPT = ENGINES.length; // 4
+const ENGINES = ['chatgpt', 'perplexity', 'gemini', 'google', 'claude'];
+const ENGINES_PER_PROMPT = ENGINES.length; // 5
 const MAX_PROMPTS = Math.floor(MAX_CALLS / ENGINES_PER_PROMPT);
 
 console.log('🚀 AI Search Cron Scheduler Started');

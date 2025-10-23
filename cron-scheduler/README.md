@@ -6,8 +6,8 @@ Automatically refreshes all active prompts once per day by calling the AI search
 
 1. Runs on a schedule (default: 2 AM daily)
 2. Fetches all prompts where `is_active = true` from Supabase
-3. Calls `/api/v1/prompt-runs/batch` for each prompt with all 4 engines
-4. Respects API call limits (default: 500 calls = 125 prompts max)
+3. Calls `/api/v1/prompt-runs/batch` for each prompt with all 5 engines
+4. Respects API call limits (default: 500 calls = 100 prompts max)
 5. Logs progress and results
 
 ## Railway Setup
@@ -57,10 +57,10 @@ Standard cron syntax: `minute hour day month weekday`
 
 ### API Call Limits
 
-With 4 engines per prompt:
-- `MAX_API_CALLS_PER_RUN=500` → 125 prompts max
-- `MAX_API_CALLS_PER_RUN=400` → 100 prompts max
-- `MAX_API_CALLS_PER_RUN=1000` → 250 prompts max
+With 5 engines per prompt:
+- `MAX_API_CALLS_PER_RUN=500` → 100 prompts max
+- `MAX_API_CALLS_PER_RUN=400` → 80 prompts max
+- `MAX_API_CALLS_PER_RUN=1000` → 200 prompts max
 
 ## Monitoring in Railway
 
