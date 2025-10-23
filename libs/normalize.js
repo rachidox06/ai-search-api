@@ -180,6 +180,50 @@ export function normalizeResponse(engine, dataforseoResponse, brandContext, jobD
         }
       }
     }
+    else if (engine === 'claude') {
+      // Claude normalization (via OpenRouter)
+      answer_markdown = result?.markdown || result?.answer || '';
+      answer_text = stripMarkdown(answer_markdown);
+
+      model = result?.model || 'anthropic/claude-4.5-sonnet';
+      apiCost = task?.cost || 0;
+
+      // Extract citations from Claude response (deduplicate by URL)
+      if (result?.citations && Array.isArray(result.citations) && result.citations.length > 0) {
+        const citations = [];
+        const seenUrls = new Set();
+
+        result.citations.forEach((citation, index) => {
+          const url = citation.url;
+
+          // Handle both URL citations and text citations
+          if (url && !seenUrls.has(url)) {
+            seenUrls.add(url);
+            citations.push({
+              number: citations.length + 1,
+              url: url,
+              title: citation.title || '',
+              text: citation.text || '',
+              domain: extractDomain(url)
+            });
+          } else if (!url && citation.type === 'text_citation') {
+            // For text-only citations (no URL)
+            citations.push({
+              number: citations.length + 1,
+              url: null,
+              title: citation.title || '',
+              text: citation.text || '',
+              domain: ''
+            });
+          }
+        });
+
+        if (citations.length > 0) {
+          extra.citations = citations;
+          extra.citations_count = citations.length;
+        }
+      }
+    }
     else if (engine === 'google') {
       // Google AI (DataForSEO) response structure
       // Response has result.markdown with full formatted answer
