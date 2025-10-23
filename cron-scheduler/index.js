@@ -39,6 +39,19 @@ const ENGINES = ['chatgpt', 'perplexity', 'gemini', 'google', 'claude'];
 const ENGINES_PER_PROMPT = ENGINES.length; // 5
 const MAX_PROMPTS = Math.floor(MAX_CALLS / ENGINES_PER_PROMPT);
 
+// Cost per engine (in USD)
+const COST_PER_ENGINE = {
+  chatgpt: 0.004,
+  google: 0.004,
+  gemini: 0.0052,
+  perplexity: 0.007,
+  claude: 0.01
+};
+
+// Calculate average cost per prompt (all 5 engines)
+const COST_PER_PROMPT = Object.values(COST_PER_ENGINE).reduce((sum, cost) => sum + cost, 0);
+const AVG_COST_PER_ENGINE = COST_PER_PROMPT / ENGINES.length;
+
 console.log('🚀 AI Search Cron Scheduler Started');
 console.log('====================================');
 console.log(`📅 Schedule: ${CRON_SCHEDULE}`);
@@ -46,6 +59,12 @@ console.log(`🔢 Max API calls per run: ${MAX_CALLS}`);
 console.log(`📝 Max prompts per run: ${MAX_PROMPTS} (${ENGINES_PER_PROMPT} engines each)`);
 console.log(`🎯 API URL: ${apiUrl}`);
 console.log(`🧪 Dry run: ${DRY_RUN === 'true' ? 'YES (no API calls)' : 'NO'}`);
+console.log(`\n💰 Cost per prompt: $${COST_PER_PROMPT.toFixed(4)} (avg per engine: $${AVG_COST_PER_ENGINE.toFixed(4)})`);
+console.log(`   - ChatGPT: $${COST_PER_ENGINE.chatgpt.toFixed(4)}`);
+console.log(`   - Google: $${COST_PER_ENGINE.google.toFixed(4)}`);
+console.log(`   - Gemini: $${COST_PER_ENGINE.gemini.toFixed(4)}`);
+console.log(`   - Perplexity: $${COST_PER_ENGINE.perplexity.toFixed(4)}`);
+console.log(`   - Claude: $${COST_PER_ENGINE.claude.toFixed(4)}`);
 console.log('====================================\n');
 
 async function fetchActivePrompts() {
@@ -195,7 +214,17 @@ async function runDailyCron() {
     const duration = ((Date.now() - startTime) / 1000).toFixed(2);
     const successful = results.filter(r => r.success).length;
     const failed = results.filter(r => !r.success).length;
-    
+
+    // Calculate costs
+    const totalCost = successful * COST_PER_PROMPT;
+    const costBreakdown = {
+      chatgpt: successful * COST_PER_ENGINE.chatgpt,
+      google: successful * COST_PER_ENGINE.google,
+      gemini: successful * COST_PER_ENGINE.gemini,
+      perplexity: successful * COST_PER_ENGINE.perplexity,
+      claude: successful * COST_PER_ENGINE.claude
+    };
+
     console.log('\n====================================');
     console.log('📊 Daily Cron Summary');
     console.log('====================================');
@@ -203,8 +232,18 @@ async function runDailyCron() {
     console.log(`❌ Failed: ${failed}`);
     console.log(`📞 API calls used: ${apiCallsUsed}/${MAX_CALLS}`);
     console.log(`⏱️  Duration: ${duration}s`);
+    console.log(`\n💰 Cost Summary:`);
+    console.log(`   Total cost: $${totalCost.toFixed(4)}`);
+    console.log(`   Cost per prompt: $${COST_PER_PROMPT.toFixed(4)}`);
+    console.log(`   Avg per engine: $${AVG_COST_PER_ENGINE.toFixed(4)}`);
+    console.log(`\n   Breakdown by engine:`);
+    console.log(`   - ChatGPT: $${costBreakdown.chatgpt.toFixed(4)}`);
+    console.log(`   - Google: $${costBreakdown.google.toFixed(4)}`);
+    console.log(`   - Gemini: $${costBreakdown.gemini.toFixed(4)}`);
+    console.log(`   - Perplexity: $${costBreakdown.perplexity.toFixed(4)}`);
+    console.log(`   - Claude: $${costBreakdown.claude.toFixed(4)}`);
     console.log('====================================\n');
-    
+
     // Send summary to Slack
     await sendCronSummary({
       date: new Date().toISOString().split('T')[0],
@@ -213,7 +252,11 @@ async function runDailyCron() {
       failed,
       duration,
       api_calls_used: apiCallsUsed,
-      max_api_calls: MAX_CALLS
+      max_api_calls: MAX_CALLS,
+      total_cost: totalCost,
+      cost_per_prompt: COST_PER_PROMPT,
+      avg_cost_per_engine: AVG_COST_PER_ENGINE,
+      cost_breakdown: costBreakdown
     });
     
   } catch (error) {

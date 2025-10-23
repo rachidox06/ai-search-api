@@ -20,11 +20,15 @@ export async function sendCronSummary(summary) {
     failed,
     duration,
     api_calls_used,
-    max_api_calls
+    max_api_calls,
+    total_cost = 0,
+    cost_per_prompt = 0,
+    avg_cost_per_engine = 0,
+    cost_breakdown = {}
   } = summary;
 
-  const successRate = total_prompts > 0 
-    ? ((successful / total_prompts) * 100).toFixed(1) 
+  const successRate = total_prompts > 0
+    ? ((successful / total_prompts) * 100).toFixed(1)
     : 100;
 
   // Choose emoji based on success
@@ -67,6 +71,38 @@ export async function sendCronSummary(summary) {
           {
             type: "mrkdwn",
             text: `*Duration:*\n${duration}s`
+          }
+        ]
+      },
+      {
+        type: "divider"
+      },
+      {
+        type: "section",
+        fields: [
+          {
+            type: "mrkdwn",
+            text: `*💰 Total Cost:*\n$${total_cost.toFixed(4)}`
+          },
+          {
+            type: "mrkdwn",
+            text: `*📊 Cost/Prompt:*\n$${cost_per_prompt.toFixed(4)}`
+          },
+          {
+            type: "mrkdwn",
+            text: `*📈 Avg/Engine:*\n$${avg_cost_per_engine.toFixed(4)}`
+          },
+          {
+            type: "mrkdwn",
+            text: `*ChatGPT:* $${(cost_breakdown.chatgpt || 0).toFixed(4)}\n*Google:* $${(cost_breakdown.google || 0).toFixed(4)}`
+          },
+          {
+            type: "mrkdwn",
+            text: `*Gemini:* $${(cost_breakdown.gemini || 0).toFixed(4)}\n*Perplexity:* $${(cost_breakdown.perplexity || 0).toFixed(4)}`
+          },
+          {
+            type: "mrkdwn",
+            text: `*Claude:* $${(cost_breakdown.claude || 0).toFixed(4)}`
           }
         ]
       },
