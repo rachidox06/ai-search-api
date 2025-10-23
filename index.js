@@ -55,6 +55,7 @@ const queues = redisAvailable
       perplexity: new BullQueue('prompt-perplexity', { connection }),
       gemini:     new BullQueue('prompt-gemini',     { connection }),
       google:     new BullQueue('prompt-google',     { connection }),
+      claude:     new BullQueue('prompt-claude',     { connection }),
     }
   : {};
 
@@ -467,7 +468,7 @@ app.post('/api/v1/prompt-runs/batch', async (req, reply) => {
     prompt_text,
     locale = 'US',
     website_id,
-    engines = ['chatgpt', 'perplexity', 'gemini', 'google']
+    engines = ['chatgpt', 'perplexity', 'gemini', 'google', 'claude']
   } = req.body || {};
   
   if (!prompt_id || !Array.isArray(engines) || engines.length === 0) {
