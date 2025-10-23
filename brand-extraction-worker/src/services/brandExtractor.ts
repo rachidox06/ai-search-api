@@ -19,12 +19,18 @@ Return ONLY a JSON array of objects (no prose, no code fences). Each object must
 ]
 
 Rules:
-- For "name", always use the company or parent brand name, NOT the product name.
-  * Example: If "iPhone" is mentioned, extract "Apple" (not "iPhone")
-  * Example: If "HubSpot CRM" is mentioned, extract "HubSpot" (not "HubSpot CRM")
+- For "name", consider the topic/industry context before deciding the brand name:
+  * If the mention refers to a standalone product/solution in a DIFFERENT category than the parent company, use the full product name.
+    Example: "Google Trends" → extract "Google Trends" (not "Google") - because Trends is a standalone analytics tool, different from Google's core search engine business
+    Example: "AWS" → extract "AWS" (not "Amazon") - because AWS is a cloud platform, different from Amazon's core e-commerce business
+  * If the mention refers to a product that is in the SAME category/strongly associated with the parent brand, use the parent company name.
+    Example: "Aeropress Coffee" → extract "Aeropress" (not "Aeropress Coffee") - because Aeropress coffee makers are the core product category of Aeropress
+    Example: "iPhone" → extract "Apple" (not "iPhone") - because iPhone is part of Apple's core consumer electronics business
 - For "domain", provide the primary website domain for the brand or company (without https:// or www).
   * Example: "Apple" → "apple.com"
   * Example: "HubSpot" → "hubspot.com"
+  * Example: "Google Trends" → "trends.google.com"
+  * Example: "AWS" → "aws.amazon.com"
 - **Do NOT extract celebrities or individual people - only extract actual companies and brands.**
 - Merge duplicate or variant mentions into a single entry using the most canonical company name.
 - Estimate sentiment from the surrounding context; use 50 if tone is neutral or ambiguous.
