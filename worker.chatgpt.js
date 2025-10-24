@@ -93,7 +93,7 @@ async function runJob(jobData) {
   console.log('✅ DataForSEO ChatGPT API response received');
 
   // 2. Normalize response with brand analysis
-  const normalized = normalizeResponse(
+  const normalized = await normalizeResponse(
     'chatgpt',
     dataforseoResponse,
     { website_domain, brand_name, brand_aliases },

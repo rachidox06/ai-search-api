@@ -108,7 +108,7 @@ async function runJob(jobData){
   };
 
   // 2. Normalize with brand analysis
-  const normalized = normalizeResponse(
+  const normalized = await normalizeResponse(
     'perplexity',
     dataforseoFormat,
     { website_domain, brand_name, brand_aliases },

@@ -91,7 +91,7 @@ async function runJob(jobData){
   console.log('✅ DataForSEO Google API response received');
 
   // 2. Normalize with brand analysis
-  const normalized = normalizeResponse(
+  const normalized = await normalizeResponse(
     'google',
     dataforseoResponse,
     { website_domain, brand_name, brand_aliases },
