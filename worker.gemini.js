@@ -3,6 +3,7 @@ import { GoogleGenerativeAI } from '@google/generative-ai';
 import { normalizeResponse } from './libs/normalize.js';
 import { saveTrackingResult } from './libs/persist.js';
 import { queueBrandExtraction } from './libs/brandQueue.js';
+import { resolveCitationUrls } from './libs/urlResolver.js';
 
 const { REDIS_HOST, REDIS_PORT = 6379, REDIS_PASSWORD, GEMINI_API_KEY } = process.env;
 
@@ -79,12 +80,20 @@ async function queryGemini(prompt) {
     });
   }
 
+  // Resolve Vertex AI redirect URLs to final destinations
+  console.log(`🔗 Resolving ${citations.length} citation URLs...`);
+  const resolvedCitations = await resolveCitationUrls(citations);
+  console.log(`✅ URLs resolved`);
+
+  // Also update sources with resolved URLs
+  const resolvedSources = await resolveCitationUrls(sources);
+
   return {
     text: enhancedText,
     originalText: text,
     groundingMetadata: groundingMetadata,
-    citations: citations,
-    sources: sources,
+    citations: resolvedCitations,
+    sources: resolvedSources,
     searchQueries: groundingMetadata?.webSearchQueries || []
   };
 }
@@ -132,7 +141,7 @@ async function runJob(jobData) {
   };
 
   // 2. Normalize with brand analysis
-  const normalized = normalizeResponse(
+  const normalized = await normalizeResponse(
     'gemini',
     dataforseoFormat,
     { website_domain, brand_name, brand_aliases },

@@ -1,4 +1,5 @@
 // ESM
+import { resolveCitationUrls } from './urlResolver.js';
 
 // ============================================================================
 // HELPER FUNCTIONS
@@ -45,7 +46,7 @@ const removeThinkingTags = (text) => {
  * Normalizes responses from different AI providers into a consistent format.
  * - Extracts core content (text, markdown)
  */
-export function normalizeResponse(engine, dataforseoResponse, brandContext, jobData = {}) {
+export async function normalizeResponse(engine, dataforseoResponse, brandContext, jobData = {}) {
   const startTime = Date.now();
   
   let answer_text = '';
@@ -151,15 +152,15 @@ export function normalizeResponse(engine, dataforseoResponse, brandContext, jobD
       // Gemini normalization
       answer_markdown = result?.markdown || result?.answer || '';
       answer_text = stripMarkdown(answer_markdown);
-      
+
       model = result?.model || 'gemini-2.5-flash';
       apiCost = task?.cost || 0;
-      
+
       // Extract citations from Gemini response (deduplicate by URL)
       if (result?.citations && Array.isArray(result.citations) && result.citations.length > 0) {
         const citations = [];
         const seenUrls = new Set();
-        
+
         result.citations.forEach((citation, index) => {
           const url = citation.url;
           if (url && !seenUrls.has(url)) {
@@ -173,10 +174,15 @@ export function normalizeResponse(engine, dataforseoResponse, brandContext, jobD
             });
           }
         });
-        
+
+        // Resolve Vertex AI redirect URLs to final destinations
         if (citations.length > 0) {
-          extra.citations = citations;
-          extra.citations_count = citations.length;
+          console.log(`🔗 [normalize.js] Resolving ${citations.length} Gemini citation URLs...`);
+          const resolvedCitations = await resolveCitationUrls(citations);
+          console.log(`✅ [normalize.js] Gemini URLs resolved`);
+
+          extra.citations = resolvedCitations;
+          extra.citations_count = resolvedCitations.length;
         }
       }
     }
