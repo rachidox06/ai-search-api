@@ -3,7 +3,7 @@ import cron from 'node-cron';
 import { createClient } from '@supabase/supabase-js';
 import dotenv from 'dotenv';
 import { sendCronSummary } from './slackNotifier.js';
-import { getEnabledEngines, shouldRunPrompt } from '../libs/locationMapping.js';
+import { getEnabledEngines, shouldRunPrompt } from './libs/locationMapping.js';
 
 dotenv.config();
 
