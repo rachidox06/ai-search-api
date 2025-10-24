@@ -124,7 +124,10 @@ async function runJob(jobData) {
   
   // 1. Call Google Gemini API
   const result = await queryGemini(prompt_text);
-  console.log('✅ Gemini API response received:', { citations_count: result.citations?.length || 0 });
+  console.log('✅ Gemini API response received:', {
+    citations_count: result.citations?.length || 0,
+    search_queries_count: result.searchQueries?.length || 0
+  });
 
   // Convert Gemini response to DataForSEO-like format for normalization
   const dataforseoFormat = {
@@ -135,6 +138,7 @@ async function runJob(jobData) {
         answer: result.text,
         sources: result.sources,
         citations: result.citations,
+        searchQueries: result.searchQueries, // Pass search queries from groundingMetadata
         model: 'gemini-2.5-flash'
       }]
     }]

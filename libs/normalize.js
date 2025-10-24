@@ -185,6 +185,12 @@ export async function normalizeResponse(engine, dataforseoResponse, brandContext
           extra.citations_count = resolvedCitations.length;
         }
       }
+
+      // Extract search queries from Gemini response (from groundingMetadata.webSearchQueries)
+      if (result?.searchQueries && Array.isArray(result.searchQueries) && result.searchQueries.length > 0) {
+        extra.search_queries = result.searchQueries;
+        console.log(`🔍 [normalize.js] Extracted ${result.searchQueries.length} search queries from Gemini`);
+      }
     }
     else if (engine === 'claude') {
       // Claude normalization (via OpenRouter)

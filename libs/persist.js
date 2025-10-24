@@ -29,11 +29,18 @@ export async function saveTrackingResult(prompt_id, normalizedData) {
       citations = normalizedData.extra.citations;
     }
 
-    // Remove citations from extra to avoid duplication
-    // Citations will be stored in dedicated 'citations' column
-    const extraWithoutCitations = { ...normalizedData.extra };
-    delete extraWithoutCitations.citations;
-    delete extraWithoutCitations.citations_count;
+    // Add search_queries if they exist in extra (for Gemini only)
+    let search_queries = null;
+    if (normalizedData.extra?.search_queries) {
+      search_queries = normalizedData.extra.search_queries;
+    }
+
+    // Remove citations and search_queries from extra to avoid duplication
+    // They will be stored in dedicated columns
+    const extraWithoutDedicatedFields = { ...normalizedData.extra };
+    delete extraWithoutDedicatedFields.citations;
+    delete extraWithoutDedicatedFields.citations_count;
+    delete extraWithoutDedicatedFields.search_queries;
 
     // Prepare the data to insert
     const insertData = {
@@ -52,12 +59,15 @@ export async function saveTrackingResult(prompt_id, normalizedData) {
       cost: normalizedData.cost,
       provider_raw: normalizedData.provider_raw,
 
-      // Metadata & extra (without citations to avoid duplication)
+      // Metadata & extra (without citations and search_queries to avoid duplication)
       metadata: normalizedData.metadata,
-      extra: extraWithoutCitations,
-      
+      extra: extraWithoutDedicatedFields,
+
       // Citations in dedicated column
-      citations: citations
+      citations: citations,
+
+      // Search queries in dedicated column (Gemini only)
+      search_queries: search_queries
     };
 
     const { data, error } = await supabase
