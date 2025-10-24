@@ -3,11 +3,12 @@ import OpenAI from 'openai';
 import { normalizeResponse } from './libs/normalize.js';
 import { saveTrackingResult } from './libs/persist.js';
 import { queueBrandExtraction } from './libs/brandQueue.js';
+import { mapLocationToISO } from './libs/locationMapping.js';
 
 const { REDIS_HOST, REDIS_PORT = 6379, REDIS_PASSWORD, OPENROUTER_API_KEY } = process.env;
 
 // Function to query Claude via OpenRouter API
-async function queryClaude(prompt, model = 'anthropic/claude-4.5-sonnet') {
+async function queryClaude(prompt, location = 'United States', model = 'anthropic/claude-4.5-sonnet') {
   if (!OPENROUTER_API_KEY) {
     throw new Error('Missing OPENROUTER_API_KEY');
   }
@@ -16,6 +17,9 @@ async function queryClaude(prompt, model = 'anthropic/claude-4.5-sonnet') {
     baseURL: "https://openrouter.ai/api/v1",
     apiKey: OPENROUTER_API_KEY,
   });
+
+  // Get ISO country code for location context
+  const countryCode = mapLocationToISO(location);
 
   const completion = await client.chat.completions.create({
     extra_headers: {
@@ -26,11 +30,11 @@ async function queryClaude(prompt, model = 'anthropic/claude-4.5-sonnet') {
     messages: [
       {
         role: "system",
-        content: "You are a helpful AI assistant with access to current information. Provide comprehensive, well-researched answers with specific facts and data. ALWAYS include citations and sources when making factual claims. Format sources as [Source: URL or publication name]. Include relevant URLs when available. Be thorough but concise."
+        content: `You are a helpful AI assistant with access to current information. Provide comprehensive, well-researched answers with specific facts and data relevant to users in ${location} (${countryCode}). ALWAYS include citations and sources when making factual claims. Format sources as [Source: URL or publication name]. Include relevant URLs when available. Be thorough but concise.`
       },
       {
         role: "user",
-        content: `${prompt}\n\nPlease provide detailed citations and sources for all factual claims in your response.`
+        content: `${prompt}\n\nPlease provide detailed citations and sources for all factual claims in your response. Focus on information relevant to ${location}.`
       }
     ],
     temperature: 0.1, // Lower temperature for more factual responses
@@ -89,7 +93,8 @@ async function runJob(jobData) {
   const {
     prompt_id,       // REQUIRED: UUID from Next.js
     prompt_text,     // REQUIRED: The actual prompt
-    locale = 'US',
+    location = 'United States', // Location name (e.g., "United States")
+    locale = 'US',   // Deprecated: kept for backward compatibility
     engine = 'claude',
     website_id,
     website_domain,  // REQUIRED: for brand tracking
@@ -99,20 +104,23 @@ async function runJob(jobData) {
     model = 'anthropic/claude-4.5-sonnet' // Default Claude model
   } = jobData;
 
-  console.log(`🚀 ${engine} job started:`, { 
-    prompt_id, 
+  // Use location if provided, otherwise fall back to locale
+  const searchLocation = location || (locale === 'US' ? 'United States' : locale);
+
+  console.log(`🚀 ${engine} job started:`, {
+    prompt_id,
     prompt: prompt_text?.substring(0, 50) + '...',
-    locale,
+    location: searchLocation,
     website_domain,
     model
   });
-  
+
   if (!prompt_id || !website_domain) {
     throw new Error('prompt_id and website_domain are required for tracking');
   }
-  
-  // 1. Call Claude via OpenRouter API
-  const result = await queryClaude(prompt_text, model);
+
+  // 1. Call Claude via OpenRouter API with location
+  const result = await queryClaude(prompt_text, searchLocation, model);
   console.log('✅ Claude API response received via OpenRouter:', { 
     model: result.model,
     sources_count: result.sources?.length || 0,
@@ -143,7 +151,7 @@ async function runJob(jobData) {
     'claude',
     dataforseoFormat,
     { website_domain, brand_name, brand_aliases },
-    { locale }
+    { location: searchLocation }
   );
   
   // 3. Save to tracking table

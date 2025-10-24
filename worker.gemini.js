@@ -4,16 +4,20 @@ import { normalizeResponse } from './libs/normalize.js';
 import { saveTrackingResult } from './libs/persist.js';
 import { queueBrandExtraction } from './libs/brandQueue.js';
 import { resolveCitationUrls } from './libs/urlResolver.js';
+import { mapLocationToCoordinates } from './libs/locationMapping.js';
 
 const { REDIS_HOST, REDIS_PORT = 6379, REDIS_PASSWORD, GEMINI_API_KEY } = process.env;
 
 // Function to query Google Gemini API
-async function queryGemini(prompt) {
+async function queryGemini(prompt, location = 'United States') {
   if (!GEMINI_API_KEY) {
     throw new Error('Missing GEMINI_API_KEY');
   }
 
   const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
+
+  // Get coordinates for location-based grounding
+  const coordinates = mapLocationToCoordinates(location);
 
   // Use gemini-2.5-flash for search capabilities and citations
   const model = genAI.getGenerativeModel({
@@ -27,7 +31,15 @@ async function queryGemini(prompt) {
     tools: [{
       google_search: {}
     }],
-    systemInstruction: "You are a helpful AI assistant with access to Google Search. When answering questions, provide comprehensive, well-researched answers with specific facts, data, and citations from reliable sources. Include links to your sources whenever possible. Be thorough but concise."
+    toolConfig: {
+      retrievalConfig: {
+        latLng: {
+          latitude: coordinates.latitude,
+          longitude: coordinates.longitude
+        }
+      }
+    },
+    systemInstruction: `You are a helpful AI assistant with access to Google Search. When answering questions, provide comprehensive, well-researched answers with specific facts, data, and citations from reliable sources, particularly relevant to ${location}. Include links to your sources whenever possible. Be thorough but concise.`
   });
 
   const result = await model.generateContent(prompt);
@@ -102,7 +114,8 @@ async function runJob(jobData) {
   const {
     prompt_id,       // REQUIRED: UUID from Next.js
     prompt_text,     // REQUIRED: The actual prompt
-    locale = 'US',
+    location = 'United States', // Location name (e.g., "United States")
+    locale = 'US',   // Deprecated: kept for backward compatibility
     engine = 'gemini',
     website_id,
     website_domain,  // REQUIRED: for brand tracking
@@ -111,10 +124,13 @@ async function runJob(jobData) {
     user_id
   } = jobData;
 
-  console.log(`🚀 ${engine} job started:`, { 
-    prompt_id, 
+  // Use location if provided, otherwise fall back to locale
+  const searchLocation = location || (locale === 'US' ? 'United States' : locale);
+
+  console.log(`🚀 ${engine} job started:`, {
+    prompt_id,
     prompt: prompt_text?.substring(0, 50) + '...',
-    locale,
+    location: searchLocation,
     website_domain
   });
   
@@ -122,8 +138,8 @@ async function runJob(jobData) {
     throw new Error('prompt_id and website_domain are required for tracking');
   }
   
-  // 1. Call Google Gemini API
-  const result = await queryGemini(prompt_text);
+  // 1. Call Google Gemini API with location
+  const result = await queryGemini(prompt_text, searchLocation);
   console.log('✅ Gemini API response received:', {
     citations_count: result.citations?.length || 0,
     search_queries_count: result.searchQueries?.length || 0
@@ -149,7 +165,7 @@ async function runJob(jobData) {
     'gemini',
     dataforseoFormat,
     { website_domain, brand_name, brand_aliases },
-    { locale }
+    { location: searchLocation }
   );
   
   // 3. Save to tracking table

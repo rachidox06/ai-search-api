@@ -2,6 +2,7 @@ import { Worker } from 'bullmq';
 import { normalizeResponse } from './libs/normalize.js';
 import { saveTrackingResult } from './libs/persist.js';
 import { queueBrandExtraction } from './libs/brandQueue.js';
+import { mapLocationToDataForSEO } from './libs/locationMapping.js';
 
 const { REDIS_HOST, REDIS_PORT = 6379, REDIS_PASSWORD, DATAFORSEO_USERNAME, DATAFORSEO_PASSWORD } = process.env;
 
@@ -11,25 +12,15 @@ function createBasicAuthHeader(username, password) {
   return { 'Authorization': `Basic ${credentials}`, 'Content-Type': 'application/json' };
 }
 // Function to query DataForSEO Google AI Mode API
-async function queryDataForSEOGoogleAI(prompt, locale = 'US') {
+async function queryDataForSEOGoogleAI(prompt, location = 'United States') {
   const url = 'https://api.dataforseo.com/v3/serp/google/ai_mode/live/advanced';
 
-  // Map locale to location_code (DataForSEO format)
-  const locationCodeMap = {
-    'US': 2840,  // United States
-    'UK': 2826,  // United Kingdom
-    'CA': 2124,  // Canada
-    'AU': 2036,  // Australia
-    'DE': 2276,  // Germany
-    'FR': 2250,  // France
-    'JP': 2392   // Japan
-  };
-
-  const locationCode = locationCodeMap[locale] || 2840; // Default to US
+  // Use location_name instead of location_code (DataForSEO accepts full names)
+  const locationName = mapLocationToDataForSEO(location);
 
   const payload = [{
     "language_code": "en",
-    "location_code": locationCode,
+    "location_name": locationName,
     "keyword": encodeURI(prompt)
   }];
 
@@ -64,7 +55,8 @@ async function runJob(jobData){
   const {
     prompt_id,       // REQUIRED: UUID from Next.js
     prompt_text,     // REQUIRED: The actual prompt
-    locale = 'US',
+    location = 'United States', // Location name (e.g., "United States")
+    locale = 'US',   // Deprecated: kept for backward compatibility
     engine = 'google',
     website_id,
     website_domain,  // REQUIRED: for brand tracking
@@ -73,13 +65,16 @@ async function runJob(jobData){
     user_id
   } = jobData;
 
-  console.log(`🚀 ${engine} job started:`, { 
-    prompt_id, 
+  // Use location if provided, otherwise fall back to locale
+  const searchLocation = location || (locale === 'US' ? 'United States' : locale);
+
+  console.log(`🚀 ${engine} job started:`, {
+    prompt_id,
     prompt: prompt_text?.substring(0, 50) + '...',
-    locale,
+    location: searchLocation,
     website_domain
   });
-  
+
   if (!DATAFORSEO_USERNAME) throw new Error('Missing DATAFORSEO_USERNAME');
   if (!DATAFORSEO_PASSWORD) throw new Error('Missing DATAFORSEO_PASSWORD');
   if (!prompt_id || !website_domain) {
@@ -87,7 +82,7 @@ async function runJob(jobData){
   }
 
   // 1. Call DataForSEO Google AI API
-  const dataforseoResponse = await queryDataForSEOGoogleAI(prompt_text, locale);
+  const dataforseoResponse = await queryDataForSEOGoogleAI(prompt_text, searchLocation);
   console.log('✅ DataForSEO Google API response received');
 
   // 2. Normalize with brand analysis
@@ -95,7 +90,7 @@ async function runJob(jobData){
     'google',
     dataforseoResponse,
     { website_domain, brand_name, brand_aliases },
-    { locale }
+    { location: searchLocation }
   );
   
   // 3. Save to tracking table

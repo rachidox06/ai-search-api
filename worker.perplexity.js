@@ -2,20 +2,32 @@ import { Worker } from 'bullmq';
 import { normalizeResponse } from './libs/normalize.js';
 import { saveTrackingResult } from './libs/persist.js';
 import { queueBrandExtraction } from './libs/brandQueue.js';
+import { mapLocationToISO, mapLocationToCoordinates } from './libs/locationMapping.js';
 
 const { REDIS_HOST, REDIS_PORT = 6379, REDIS_PASSWORD, PERPLEXITY_API_KEY } = process.env;
 
 // Function to query Perplexity API
-async function queryPerplexity(prompt, model = 'sonar') {
+async function queryPerplexity(prompt, location = 'United States', model = 'sonar') {
   if (!PERPLEXITY_API_KEY) {
     throw new Error('Missing PERPLEXITY_API_KEY');
   }
 
   const url = 'https://api.perplexity.ai/chat/completions';
 
+  // Get ISO country code and coordinates for location
+  const countryCode = mapLocationToISO(location);
+  const coordinates = mapLocationToCoordinates(location);
+
   const payload = {
     model: model,
     search_mode: 'web',
+    web_search_options: {
+      user_location: {
+        country: countryCode,
+        latitude: coordinates.latitude,
+        longitude: coordinates.longitude
+      }
+    },
     messages: [
       {
         role: 'system',
@@ -59,7 +71,8 @@ async function runJob(jobData){
   const {
     prompt_id,       // REQUIRED: UUID from Next.js
     prompt_text,     // REQUIRED: The actual prompt
-    locale = 'US',
+    location = 'United States', // Location name (e.g., "United States")
+    locale = 'US',   // Deprecated: kept for backward compatibility
     engine = 'perplexity',
     website_id,
     website_domain,  // REQUIRED: for brand tracking
@@ -68,19 +81,22 @@ async function runJob(jobData){
     user_id
   } = jobData;
 
-  console.log(`🚀 ${engine} job started:`, { 
-    prompt_id, 
+  // Use location if provided, otherwise fall back to locale
+  const searchLocation = location || (locale === 'US' ? 'United States' : locale);
+
+  console.log(`🚀 ${engine} job started:`, {
+    prompt_id,
     prompt: prompt_text?.substring(0, 50) + '...',
-    locale,
+    location: searchLocation,
     website_domain
   });
-  
+
   if (!prompt_id || !website_domain) {
     throw new Error('prompt_id and website_domain are required for tracking');
   }
-  
-  // 1. Call Perplexity API
-  const perplexityResponse = await queryPerplexity(prompt_text);
+
+  // 1. Call Perplexity API with location
+  const perplexityResponse = await queryPerplexity(prompt_text, searchLocation);
   console.log('✅ Perplexity API response received');
 
   // Extract citations from Perplexity response (they're at the top level, not in message)
@@ -112,7 +128,7 @@ async function runJob(jobData){
     'perplexity',
     dataforseoFormat,
     { website_domain, brand_name, brand_aliases },
-    { locale }
+    { location: searchLocation }
   );
   
   // 3. Save to tracking table

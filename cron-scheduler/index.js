@@ -3,6 +3,7 @@ import cron from 'node-cron';
 import { createClient } from '@supabase/supabase-js';
 import dotenv from 'dotenv';
 import { sendCronSummary } from './slackNotifier.js';
+import { getEnabledEngines, shouldRunPrompt } from '../libs/locationMapping.js';
 
 dotenv.config();
 
@@ -35,9 +36,9 @@ apiUrl = apiUrl.replace(/\/$/, '');
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 const MAX_CALLS = parseInt(MAX_API_CALLS_PER_RUN);
-const ENGINES = ['chatgpt', 'perplexity', 'gemini', 'google', 'claude'];
-const ENGINES_PER_PROMPT = ENGINES.length; // 5
-const MAX_PROMPTS = Math.floor(MAX_CALLS / ENGINES_PER_PROMPT);
+const DEFAULT_ENGINES = ['chatgpt', 'perplexity', 'gemini', 'google', 'claude'];
+const MAX_ENGINES_PER_PROMPT = DEFAULT_ENGINES.length; // 5
+const MAX_PROMPTS = Math.floor(MAX_CALLS / MAX_ENGINES_PER_PROMPT);
 
 // Cost per engine (in USD)
 const COST_PER_ENGINE = {
@@ -50,16 +51,16 @@ const COST_PER_ENGINE = {
 
 // Calculate average cost per prompt (all 5 engines)
 const COST_PER_PROMPT = Object.values(COST_PER_ENGINE).reduce((sum, cost) => sum + cost, 0);
-const AVG_COST_PER_ENGINE = COST_PER_PROMPT / ENGINES.length;
+const AVG_COST_PER_ENGINE = COST_PER_PROMPT / DEFAULT_ENGINES.length;
 
 console.log('🚀 AI Search Cron Scheduler Started');
 console.log('====================================');
 console.log(`📅 Schedule: ${CRON_SCHEDULE}`);
 console.log(`🔢 Max API calls per run: ${MAX_CALLS}`);
-console.log(`📝 Max prompts per run: ${MAX_PROMPTS} (${ENGINES_PER_PROMPT} engines each)`);
+console.log(`📝 Max prompts per run: ~${MAX_PROMPTS} (varies by tracking_config)`);
 console.log(`🎯 API URL: ${apiUrl}`);
 console.log(`🧪 Dry run: ${DRY_RUN === 'true' ? 'YES (no API calls)' : 'NO'}`);
-console.log(`\n💰 Cost per prompt: $${COST_PER_PROMPT.toFixed(4)} (avg per engine: $${AVG_COST_PER_ENGINE.toFixed(4)})`);
+console.log(`\n💰 Max cost per prompt (all engines): $${COST_PER_PROMPT.toFixed(4)}`);
 console.log(`   - ChatGPT: $${COST_PER_ENGINE.chatgpt.toFixed(4)}`);
 console.log(`   - Google: $${COST_PER_ENGINE.google.toFixed(4)}`);
 console.log(`   - Gemini: $${COST_PER_ENGINE.gemini.toFixed(4)}`);
@@ -70,13 +71,19 @@ console.log('====================================\n');
 async function fetchActivePrompts() {
   try {
     console.log('📋 Fetching active prompts from Supabase...');
-    
+
     const { data, error } = await supabase
       .from('prompts')
       .select(`
         id,
         content,
         website_id,
+        location,
+        language,
+        check_frequency,
+        tracking_config,
+        last_run_at,
+        is_active,
         websites!website_id (
           id,
           domain,
@@ -84,23 +91,42 @@ async function fetchActivePrompts() {
           brand_aliases
         )
       `)
-      .eq('is_active', true)
+      .eq('is_active', true) // IMPORTANT: Only fetch active prompts
       .order('created_at', { ascending: true })
-      .limit(MAX_PROMPTS);
-    
+      .limit(MAX_PROMPTS * 2); // Fetch more since we'll filter by frequency
+
     if (error) {
       console.error('❌ Supabase error:', error);
       throw error;
     }
-    
+
     if (!data || data.length === 0) {
       console.log('⚠️  No active prompts found');
       return [];
     }
-    
-    console.log(`✅ Found ${data.length} active prompt(s)`);
-    return data;
-    
+
+    // Filter prompts based on is_active, check_frequency, and last_run_at
+    const filteredPrompts = data.filter(prompt => {
+      // Double-check is_active (defensive check, already filtered by SQL)
+      if (!prompt.is_active) {
+        console.log(`⏭️  Skipping inactive prompt ${prompt.id}`);
+        return false;
+      }
+
+      // Check if prompt should run based on frequency
+      const shouldRun = shouldRunPrompt(prompt.check_frequency, prompt.last_run_at);
+      if (!shouldRun) {
+        console.log(`⏭️  Skipping prompt ${prompt.id} (${prompt.check_frequency}, last run: ${prompt.last_run_at})`);
+      }
+      return shouldRun;
+    });
+
+    // Limit to MAX_PROMPTS after filtering
+    const limitedPrompts = filteredPrompts.slice(0, MAX_PROMPTS);
+
+    console.log(`✅ Found ${data.length} active prompt(s), ${filteredPrompts.length} due to run, processing ${limitedPrompts.length}`);
+    return limitedPrompts;
+
   } catch (error) {
     console.error('❌ Failed to fetch prompts:', error.message);
     throw error;
@@ -108,33 +134,38 @@ async function fetchActivePrompts() {
 }
 
 async function processPrompt(prompt) {
-  const { id, content, website_id, websites } = prompt;
-  
+  const { id, content, website_id, websites, location, tracking_config } = prompt;
+
   if (!websites) {
     console.error(`⚠️  Skipping prompt ${id}: No website data found`);
     return { success: false, error: 'no_website_data' };
   }
-  
+
+  // Get enabled engines from tracking_config
+  const enabledEngines = getEnabledEngines(tracking_config);
+
   const payload = {
     prompt_id: id,
     prompt_text: content,
     website_id: website_id,
-    engines: ENGINES,
-    locale: 'US'
+    engines: enabledEngines,
+    location: location || 'United States' // Use location from DB, default to US
   };
   
   try {
     console.log(`  📤 Queuing prompt: ${id}`);
     console.log(`     Website: ${websites.domain}`);
-    console.log(`     Engines: ${ENGINES.join(', ')}`);
-    
+    console.log(`     Location: ${location || 'United States'}`);
+    console.log(`     Engines: ${enabledEngines.join(', ')} (${enabledEngines.length})`);
+
     if (DRY_RUN === 'true') {
       console.log('     🧪 DRY RUN - Skipping actual API call');
-      return { 
-        success: true, 
-        prompt_id: id, 
+      return {
+        success: true,
+        prompt_id: id,
         job_ids: { dry_run: true },
-        dry_run: true 
+        dry_run: true,
+        engines_count: enabledEngines.length
       };
     }
     
@@ -159,12 +190,28 @@ async function processPrompt(prompt) {
     const result = await response.json();
     console.log(`     ✅ Queued successfully`);
     console.log(`     Job IDs:`, result.job_ids);
-    
-    return { success: true, ...result };
-    
+
+    // Update last_run_at timestamp in Supabase
+    try {
+      const { error: updateError } = await supabase
+        .from('prompts')
+        .update({ last_run_at: new Date().toISOString() })
+        .eq('id', id);
+
+      if (updateError) {
+        console.error(`     ⚠️  Failed to update last_run_at:`, updateError.message);
+      } else {
+        console.log(`     📅 Updated last_run_at`);
+      }
+    } catch (updateErr) {
+      console.error(`     ⚠️  Error updating last_run_at:`, updateErr.message);
+    }
+
+    return { success: true, engines_count: enabledEngines.length, ...result };
+
   } catch (error) {
     console.error(`     ❌ Failed to process prompt ${id}:`, error.message);
-    return { success: false, error: error.message };
+    return { success: false, error: error.message, engines_count: 0 };
   }
 }
 
@@ -185,25 +232,29 @@ async function runDailyCron() {
     // Process each prompt sequentially
     const results = [];
     let apiCallsUsed = 0;
-    
+
     for (let i = 0; i < prompts.length; i++) {
       const prompt = prompts[i];
-      
+
+      // Get enabled engines count for this prompt
+      const enabledEngines = getEnabledEngines(prompt.tracking_config);
+      const enginesCount = enabledEngines.length;
+
       // Check if we've hit the limit
-      if (apiCallsUsed + ENGINES_PER_PROMPT > MAX_CALLS) {
+      if (apiCallsUsed + enginesCount > MAX_CALLS) {
         console.log(`\n⚠️  Reached API call limit (${MAX_CALLS}). Stopping.`);
         console.log(`   Processed: ${i}/${prompts.length} prompts`);
         break;
       }
-      
+
       console.log(`\n[${i + 1}/${prompts.length}] Processing prompt...`);
       const result = await processPrompt(prompt);
       results.push(result);
-      
+
       if (result.success && !result.dry_run) {
-        apiCallsUsed += ENGINES_PER_PROMPT;
+        apiCallsUsed += result.engines_count || enginesCount;
       }
-      
+
       // Small delay between requests to be nice to the API
       if (i < prompts.length - 1) {
         await new Promise(resolve => setTimeout(resolve, 1000));

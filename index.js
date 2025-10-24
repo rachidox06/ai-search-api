@@ -319,17 +319,21 @@ app.get('/api/v1/prompt-runs/:id', async (req, reply) => {
 
 // --- POST /api/v1/prompt-runs/batch (Multi-Engine with Supabase fetching) ---
 app.post('/api/v1/prompt-runs/batch', async (req, reply) => {
-  const { 
+  const {
     prompt_id,
     prompt_text,
-    locale = 'US',
+    locale = 'US', // Deprecated: kept for backward compatibility
+    location, // New: location name (e.g., "United States")
     website_id,
     engines = ['chatgpt', 'perplexity', 'gemini', 'google', 'claude']
   } = req.body || {};
-  
+
+  // Use location if provided, otherwise fall back to locale for backward compatibility
+  const promptLocation = location || (locale === 'US' ? 'United States' : locale);
+
   if (!prompt_id || !Array.isArray(engines) || engines.length === 0) {
-    return reply.code(400).send({ 
-      error: 'prompt_id and engines[] are required' 
+    return reply.code(400).send({
+      error: 'prompt_id and engines[] are required'
     });
   }
   
@@ -407,7 +411,8 @@ app.post('/api/v1/prompt-runs/batch', async (req, reply) => {
         prompt_id,
         prompt_text: promptText,
         engine: eng,
-        locale,
+        location: promptLocation, // Use location name (e.g., "United States")
+        locale, // Deprecated: kept for backward compatibility
         user_id,
         group_id,
         website_id: websiteData?.website_id || null,
