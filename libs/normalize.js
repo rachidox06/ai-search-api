@@ -272,6 +272,11 @@ export async function normalizeResponse(engine, dataforseoResponse, brandContext
       // 2. Element level: result.items[0].items[].references
       const citations = [];
       const seenUrls = new Set();
+      
+      // URLs to skip from citations (non-citation URLs)
+      const skipUrls = [
+        'https://blog.google/products/shopping/shopping-graph-explained/'
+      ];
 
       if (result?.items?.[0]) {
         const overview = result.items[0];
@@ -279,7 +284,7 @@ export async function normalizeResponse(engine, dataforseoResponse, brandContext
         // Collect overview-level references
         if (overview.references && Array.isArray(overview.references)) {
           overview.references.forEach(ref => {
-            if (ref.url && !seenUrls.has(ref.url)) {
+            if (ref.url && !seenUrls.has(ref.url) && !skipUrls.includes(ref.url)) {
               seenUrls.add(ref.url);
               citations.push({
                 url: ref.url,
@@ -297,7 +302,7 @@ export async function normalizeResponse(engine, dataforseoResponse, brandContext
           overview.items.forEach(item => {
             if (item.references && Array.isArray(item.references)) {
               item.references.forEach(ref => {
-                if (ref.url && !seenUrls.has(ref.url)) {
+                if (ref.url && !seenUrls.has(ref.url) && !skipUrls.includes(ref.url)) {
                   seenUrls.add(ref.url);
                   citations.push({
                     url: ref.url,
