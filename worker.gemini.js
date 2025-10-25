@@ -106,7 +106,8 @@ async function queryGemini(prompt, location = 'United States') {
     groundingMetadata: groundingMetadata,
     citations: resolvedCitations,
     sources: resolvedSources,
-    searchQueries: groundingMetadata?.webSearchQueries || []
+    searchQueries: groundingMetadata?.webSearchQueries || [],
+    rawResponse: response // Include the raw Gemini API response
   };
 }
 
@@ -160,12 +161,13 @@ async function runJob(jobData) {
     }]
   };
 
-  // 2. Normalize with brand analysis
+  // 2. Normalize with brand analysis (pass raw response separately)
   const normalized = await normalizeResponse(
     'gemini',
     dataforseoFormat,
     { website_domain, brand_name, brand_aliases },
-    { location: searchLocation }
+    { location: searchLocation },
+    result.rawResponse // Pass the unmodified raw Gemini API response
   );
   
   // 3. Save to tracking table

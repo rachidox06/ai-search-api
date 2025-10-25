@@ -87,12 +87,16 @@ async function runJob(jobData) {
   const dataforseoResponse = await queryDataForSEOChatGPT(prompt_text, searchLocation);
   console.log('✅ DataForSEO ChatGPT API response received');
 
-  // 2. Normalize response with brand analysis
+  // Store the raw DataForSEO API response (unmodified)
+  const rawDataForSEOResponse = dataforseoResponse;
+
+  // 2. Normalize response with brand analysis (pass raw response separately)
   const normalized = await normalizeResponse(
     'chatgpt',
     dataforseoResponse,
     { website_domain, brand_name, brand_aliases },
-    { location: searchLocation }
+    { location: searchLocation },
+    rawDataForSEOResponse // Pass the unmodified raw DataForSEO API response
   );
   
   // 3. Save to tracking table

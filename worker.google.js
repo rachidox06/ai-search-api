@@ -85,12 +85,16 @@ async function runJob(jobData){
   const dataforseoResponse = await queryDataForSEOGoogleAI(prompt_text, searchLocation);
   console.log('✅ DataForSEO Google API response received');
 
-  // 2. Normalize with brand analysis
+  // Store the raw DataForSEO API response (unmodified)
+  const rawDataForSEOResponse = dataforseoResponse;
+
+  // 2. Normalize with brand analysis (pass raw response separately)
   const normalized = await normalizeResponse(
     'google',
     dataforseoResponse,
     { website_domain, brand_name, brand_aliases },
-    { location: searchLocation }
+    { location: searchLocation },
+    rawDataForSEOResponse // Pass the unmodified raw DataForSEO API response
   );
   
   // 3. Save to tracking table

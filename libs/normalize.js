@@ -45,8 +45,13 @@ const removeThinkingTags = (text) => {
 /**
  * Normalizes responses from different AI providers into a consistent format.
  * - Extracts core content (text, markdown)
+ * @param {string} engine - The engine name (gemini, claude, perplexity, chatgpt, google)
+ * @param {object} dataforseoResponse - The formatted response for normalization
+ * @param {object} brandContext - Brand context for analysis
+ * @param {object} jobData - Additional job data
+ * @param {object} rawResponse - The original unmodified API response (optional, defaults to dataforseoResponse)
  */
-export async function normalizeResponse(engine, dataforseoResponse, brandContext, jobData = {}) {
+export async function normalizeResponse(engine, dataforseoResponse, brandContext, jobData = {}, rawResponse = null) {
   const startTime = Date.now();
   
   let answer_text = '';
@@ -331,7 +336,7 @@ export async function normalizeResponse(engine, dataforseoResponse, brandContext
       // Provider fields
       provider: 'dataforseo',
       cost: apiCost,
-      provider_raw: dataforseoResponse,
+      provider_raw: rawResponse || dataforseoResponse, // Use raw response if provided, otherwise use dataforseoResponse
 
       // Metadata
       metadata: {

@@ -99,6 +99,9 @@ async function runJob(jobData){
   const perplexityResponse = await queryPerplexity(prompt_text, searchLocation);
   console.log('✅ Perplexity API response received');
 
+  // Store the raw Perplexity API response (unmodified)
+  const rawPerplexityResponse = perplexityResponse;
+
   // Extract citations from Perplexity response (they're at the top level, not in message)
   const citations = perplexityResponse?.citations || [];
   const citationsArray = Array.isArray(citations) ? citations : [];
@@ -123,12 +126,13 @@ async function runJob(jobData){
     }]
   };
 
-  // 2. Normalize with brand analysis
+  // 2. Normalize with brand analysis (pass raw response separately)
   const normalized = await normalizeResponse(
     'perplexity',
     dataforseoFormat,
     { website_domain, brand_name, brand_aliases },
-    { location: searchLocation }
+    { location: searchLocation },
+    rawPerplexityResponse // Pass the unmodified raw Perplexity API response
   );
   
   // 3. Save to tracking table

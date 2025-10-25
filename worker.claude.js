@@ -85,7 +85,8 @@ async function queryClaude(prompt, location = 'United States', model = 'anthropi
     originalText: response,
     sources: sources,
     model: model,
-    usage: completion.usage
+    usage: completion.usage,
+    rawResponse: completion // Include the raw OpenRouter/Claude API response
   };
 }
 
@@ -146,12 +147,13 @@ async function runJob(jobData) {
     }]
   };
 
-  // 2. Normalize with brand analysis
+  // 2. Normalize with brand analysis (pass raw response separately)
   const normalized = await normalizeResponse(
     'claude',
     dataforseoFormat,
     { website_domain, brand_name, brand_aliases },
-    { location: searchLocation }
+    { location: searchLocation },
+    result.rawResponse // Pass the unmodified raw Claude/OpenRouter API response
   );
   
   // 3. Save to tracking table
