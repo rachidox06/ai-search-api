@@ -5,13 +5,13 @@ import { ExtractedBrand } from '../types';
 const openai = new OpenAI({ apiKey: config.openai.apiKey });
 
 const BRAND_EXTRACTION_PROMPT = `
-Extract every distinct brand or company referenced in the following text.
+Extract every distinct brand or company referenced in the following text. The text may be in any language (English, French, German, Spanish, etc.).
 
 Return ONLY a JSON array of objects (no prose, no code fences). Each object must follow this schema exactly:
 
 [
   {
-    "name": "Company or brand name (not product name)",
+    "name": "Company or brand name (not product name) - in the original language from the text",
     "domain": "Primary domain name for this brand or company (e.g., apple.com, hubspot.com)",
     "sentiment": 0-100 integer score reflecting how positively the brand is portrayed (0 = very negative, 50 = neutral, 100 = very positive),
     "ranking_position": integer representing the 1-based order of appearance of the brand in the answer text (first occurrence = 1)
@@ -19,21 +19,22 @@ Return ONLY a JSON array of objects (no prose, no code fences). Each object must
 ]
 
 Rules:
-- For "name", consider the topic/industry context before deciding the brand name:
+- **MULTILINGUAL**: The text can be in any language. Extract brands regardless of the language used.
+- For "name", use the brand name as it appears in the text (preserve original language):
   * If the mention refers to a standalone product/solution in a DIFFERENT category than the parent company, use the full product name.
-    Example: "Google Trends" → extract "Google Trends" (not "Google") - because Trends is a standalone analytics tool, different from Google's core search engine business
-    Example: "AWS" → extract "AWS" (not "Amazon") - because AWS is a cloud platform, different from Amazon's core e-commerce business
+    Example: "Google Trends" → extract "Google Trends" (not "Google")
+    Example: "AWS" → extract "AWS" (not "Amazon")
   * If the mention refers to a product that is in the SAME category/strongly associated with the parent brand, use the parent company name.
-    Example: "Aeropress Coffee" → extract "Aeropress" (not "Aeropress Coffee") - because Aeropress coffee makers are the core product category of Aeropress
-    Example: "iPhone" → extract "Apple" (not "iPhone") - because iPhone is part of Apple's core consumer electronics business
-- For "domain", provide the primary website domain for the brand or company (without https:// or www).
-  * Example: "Apple" → "apple.com"
+    Example: "Aeropress Coffee" → extract "Aeropress" (not "Aeropress Coffee")
+    Example: "iPhone" → extract "Apple" (not "iPhone")
+- For "domain", provide the primary international website domain for the brand or company (without https:// or www).
+  * Example: "Apple" / "애플" / "Apple Inc." → "apple.com"
   * Example: "HubSpot" → "hubspot.com"
-  * Example: "Google Trends" → "trends.google.com"
-  * Example: "AWS" → "aws.amazon.com"
+  * Example: "Carrefour" → "carrefour.com"
+  * Example: "Deutsche Bank" → "db.com"
 - **Do NOT extract celebrities or individual people - only extract actual companies and brands.**
-- Merge duplicate or variant mentions into a single entry using the most canonical company name.
-- Estimate sentiment from the surrounding context; use 50 if tone is neutral or ambiguous.
+- Merge duplicate or variant mentions (including different language variants) into a single entry using the most canonical company name.
+- Estimate sentiment from the surrounding context in the text's language; use 50 if tone is neutral or ambiguous.
 - "ranking_position" must reflect the first mention order within the text.
 - Exclude generic terms, product categories, and people.
 
@@ -58,7 +59,7 @@ export class BrandExtractorService {
         messages: [
           {
             role: 'system',
-            content: 'You are a brand extraction expert. Extract brands from text accurately.'
+            content: 'You are a multilingual brand extraction expert. Extract brands and companies from text in any language (English, French, German, Spanish, etc.) accurately. Always return valid JSON.'
           },
           {
             role: 'user',

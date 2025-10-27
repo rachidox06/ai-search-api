@@ -106,7 +106,7 @@ async function runJob(jobData) {
   // 4. Queue brand extraction
   await queueBrandExtraction(
     saved.id,              // resultId
-    normalized.answer_text, // answerText
+    normalized.answer_markdown, // answerText
     prompt_id,             // promptId
     website_id             // websiteId
   );
