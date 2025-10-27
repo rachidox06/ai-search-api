@@ -1,11 +1,10 @@
 import { Job } from 'bullmq';
 import { BrandExtractionJob, BrandExtractionResult } from '../types';
 import { BrandExtractorService } from '../services/brandExtractor';
-import { SupabaseService } from '../services/supabase';
+import { createSupabaseClient, saveBrandExtractionResult } from '../services/supabase';
 import { config } from '../config';
 
 const brandExtractor = new BrandExtractorService();
-const supabase = new SupabaseService();
 
 export async function processBrandExtraction(job: Job<BrandExtractionJob>): Promise<BrandExtractionResult> {
   const { resultId, answerText } = job.data;
@@ -25,6 +24,10 @@ export async function processBrandExtraction(job: Job<BrandExtractionJob>): Prom
     };
   }
   
+  // Create a dedicated Supabase client for THIS job
+  // This avoids connection conflicts when processing 10+ jobs concurrently
+  const supabaseClient = createSupabaseClient();
+  
   try {
     // Extract brands using OpenAI
     const extraction = await brandExtractor.extractBrands(answerText);
@@ -33,8 +36,9 @@ export async function processBrandExtraction(job: Job<BrandExtractionJob>): Prom
     console.log(`[Processor] Cost: $${extraction.cost.toFixed(6)}`);
     console.log(`[Processor] Processing time: ${extraction.processingTime}ms`);
     
-    // Save to database
-    await supabase.saveBrandExtractionResult(
+    // Save to database using this job's dedicated client
+    await saveBrandExtractionResult(
+      supabaseClient,
       resultId,
       extraction.brands,
       extraction.cost
