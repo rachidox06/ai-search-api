@@ -3,6 +3,7 @@ import { normalizeResponse } from './libs/normalize.js';
 import { saveTrackingResult } from './libs/persist.js';
 import { queueBrandExtraction } from './libs/brandQueue.js';
 import { mapLocationToDataForSEO } from './libs/locationMapping.js';
+import { alertJobFailed, alertBrandExtractionNotQueued } from './libs/alerting.js';
 
 const { REDIS_HOST, REDIS_PORT = 6379, REDIS_PASSWORD, DATAFORSEO_USERNAME, DATAFORSEO_PASSWORD } = process.env;
 
@@ -104,12 +105,20 @@ async function runJob(jobData) {
   console.log('✅ Tracking result saved:', saved.id);
   
   // 4. Queue brand extraction
-  await queueBrandExtraction(
+  const brandJobId = await queueBrandExtraction(
     saved.id,              // resultId
     normalized.answer_markdown, // answerText
     prompt_id,             // promptId
     website_id             // websiteId
   );
+  
+  // Alert if brand extraction was not queued
+  if (!brandJobId) {
+    await alertBrandExtractionNotQueued({
+      resultId: saved.id,
+      reason: normalized.answer_markdown ? 'queue_error' : 'empty_markdown'
+    });
+  }
   
   // 5. Return result for job queue
   return {
@@ -122,7 +131,7 @@ async function runJob(jobData) {
   };
 }
 
-new Worker('prompt-chatgpt', async job => runJob(job.data), { 
+const worker = new Worker('prompt-chatgpt', async job => runJob(job.data), { 
   connection: {
     host: REDIS_HOST,
     port: Number(REDIS_PORT),
@@ -132,4 +141,18 @@ new Worker('prompt-chatgpt', async job => runJob(job.data), {
   },
   concurrency: 10
 });
+
+// Alert on final job failure (after all retries)
+worker.on('failed', async (job, error) => {
+  if (job && job.attemptsMade >= 3) {
+    await alertJobFailed({
+      engine: 'chatgpt',
+      promptId: job.data.prompt_id,
+      jobId: job.id,
+      error: error.message,
+      attemptsMade: job.attemptsMade
+    });
+  }
+});
+
 console.log('worker.chatgpt started (DataForSEO) with concurrency: 10');

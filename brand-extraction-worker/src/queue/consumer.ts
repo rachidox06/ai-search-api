@@ -3,6 +3,7 @@ import { Redis } from 'ioredis';
 import { config } from '../config';
 import { BrandExtractionJob } from '../types';
 import { processBrandExtraction } from './processor';
+import { alertBrandExtractionFailed } from '../services/alerting';
 
 export function createWorker(): Worker<BrandExtractionJob> {
   const connection = new Redis({
@@ -38,10 +39,19 @@ export function createWorker(): Worker<BrandExtractionJob> {
     console.log(`[Worker] Extracted ${result.brands.length} brands in ${result.processingTime}ms`);
   });
   
-  worker.on('failed', (job: Job<BrandExtractionJob> | undefined, error: Error) => {
+  worker.on('failed', async (job: Job<BrandExtractionJob> | undefined, error: Error) => {
     if (job) {
       console.error(`[Worker] ❌ Job ${job.id} failed for result ${job.data.resultId}:`, error.message);
       console.error(`[Worker] Attempt ${job.attemptsMade} of ${config.queue.maxRetries}`);
+      
+      // Alert on final failure (after all retries)
+      if (job.attemptsMade >= config.queue.maxRetries) {
+        await alertBrandExtractionFailed({
+          resultId: job.data.resultId,
+          error: error.message,
+          attemptsMade: job.attemptsMade
+        });
+      }
     }
   });
   

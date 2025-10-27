@@ -3,6 +3,7 @@ import { normalizeResponse } from './libs/normalize.js';
 import { saveTrackingResult } from './libs/persist.js';
 import { queueBrandExtraction } from './libs/brandQueue.js';
 import { mapLocationToISO, mapLocationToCoordinates } from './libs/locationMapping.js';
+import { alertJobFailed, alertBrandExtractionNotQueued } from './libs/alerting.js';
 
 const { REDIS_HOST, REDIS_PORT = 6379, REDIS_PASSWORD, PERPLEXITY_API_KEY } = process.env;
 
@@ -140,12 +141,20 @@ async function runJob(jobData){
   console.log('✅ Tracking result saved:', saved.id);
   
   // 4. Queue brand extraction
-  await queueBrandExtraction(
+  const brandJobId = await queueBrandExtraction(
     saved.id,              // resultId
     normalized.answer_markdown, // answerText
     prompt_id,             // promptId
     website_id             // websiteId
   );
+  
+  // Alert if brand extraction was not queued
+  if (!brandJobId) {
+    await alertBrandExtractionNotQueued({
+      resultId: saved.id,
+      reason: normalized.answer_markdown ? 'queue_error' : 'empty_markdown'
+    });
+  }
   
   // 5. Return result
   return {
@@ -173,8 +182,19 @@ worker.on('error', (err) => {
   console.error('❌ Worker error:', err);
 });
 
-worker.on('failed', (job, err) => {
+worker.on('failed', async (job, err) => {
   console.error('❌ Job failed:', job.id, err.message);
+  
+  // Alert on final failure (after all retries)
+  if (job && job.attemptsMade >= 3) {
+    await alertJobFailed({
+      engine: 'perplexity',
+      promptId: job.data.prompt_id,
+      jobId: job.id,
+      error: err.message,
+      attemptsMade: job.attemptsMade
+    });
+  }
 });
 
 worker.on('completed', (job) => {

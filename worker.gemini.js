@@ -5,6 +5,7 @@ import { saveTrackingResult } from './libs/persist.js';
 import { queueBrandExtraction } from './libs/brandQueue.js';
 import { resolveCitationUrls } from './libs/urlResolver.js';
 import { mapLocationToCoordinates } from './libs/locationMapping.js';
+import { alertJobFailed, alertBrandExtractionNotQueued } from './libs/alerting.js';
 
 const { REDIS_HOST, REDIS_PORT = 6379, REDIS_PASSWORD, GEMINI_API_KEY } = process.env;
 
@@ -175,12 +176,20 @@ async function runJob(jobData) {
   console.log('✅ Tracking result saved:', saved.id);
   
   // 4. Queue brand extraction
-  await queueBrandExtraction(
+  const brandJobId = await queueBrandExtraction(
     saved.id,              // resultId
     normalized.answer_markdown, // answerText
     prompt_id,             // promptId
     website_id             // websiteId
   );
+  
+  // Alert if brand extraction was not queued
+  if (!brandJobId) {
+    await alertBrandExtractionNotQueued({
+      resultId: saved.id,
+      reason: normalized.answer_markdown ? 'queue_error' : 'empty_markdown'
+    });
+  }
   
   // 5. Return result
   return {
@@ -193,7 +202,7 @@ async function runJob(jobData) {
   };
 }
 
-new Worker('prompt-gemini', async job=>runJob(job.data), { 
+const worker = new Worker('prompt-gemini', async job=>runJob(job.data), { 
   connection: {
     host: REDIS_HOST,
     port: Number(REDIS_PORT),
@@ -203,4 +212,18 @@ new Worker('prompt-gemini', async job=>runJob(job.data), {
   },
   concurrency: 10
 });
+
+// Alert on final job failure (after all retries)
+worker.on('failed', async (job, error) => {
+  if (job && job.attemptsMade >= 3) {
+    await alertJobFailed({
+      engine: 'gemini',
+      promptId: job.data.prompt_id,
+      jobId: job.id,
+      error: error.message,
+      attemptsMade: job.attemptsMade
+    });
+  }
+});
+
 console.log('worker.gemini started (Google API) with concurrency: 10');
