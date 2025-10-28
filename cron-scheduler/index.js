@@ -40,6 +40,92 @@ const DEFAULT_ENGINES = ['chatgpt', 'perplexity', 'gemini', 'google', 'claude'];
 const MAX_ENGINES_PER_PROMPT = DEFAULT_ENGINES.length; // 5
 const MAX_PROMPTS = Math.floor(MAX_CALLS / MAX_ENGINES_PER_PROMPT);
 
+// Function to get actual costs from prompt_tracking_results for a batch of prompts
+async function getActualCostsForPrompts(promptIds, batchStartTime) {
+  try {
+    console.log(`💰 Fetching actual costs for ${promptIds.length} prompts...`);
+    
+    const { data, error } = await supabase
+      .from('prompt_tracking_results')
+      .select('prompt_id, engine, cost, checked_at')
+      .in('prompt_id', promptIds)
+      .gte('checked_at', batchStartTime) // Only results from this batch
+      .order('checked_at', { ascending: false });
+
+    if (error) {
+      console.error('❌ Error fetching actual costs:', error);
+      return null;
+    }
+
+    if (!data || data.length === 0) {
+      console.log('⚠️  No actual cost data found yet (jobs may still be running)');
+      return null;
+    }
+
+    // Group by engine and calculate totals and counts
+    const costsByEngine = {
+      chatgpt: 0,
+      google: 0,
+      gemini: 0,
+      perplexity: 0,
+      claude: 0
+    };
+
+    const countsByEngine = {
+      chatgpt: 0,
+      google: 0,
+      gemini: 0,
+      perplexity: 0,
+      claude: 0
+    };
+
+    let totalActualCost = 0;
+    let resultsCount = 0;
+
+    data.forEach(result => {
+      const cost = parseFloat(result.cost || 0);
+      totalActualCost += cost;
+      resultsCount++;
+      
+      if (costsByEngine.hasOwnProperty(result.engine)) {
+        costsByEngine[result.engine] += cost;
+        countsByEngine[result.engine]++;
+      }
+    });
+
+    // Calculate average cost per prompt per engine
+    const avgCostPerPromptByEngine = {};
+    Object.keys(costsByEngine).forEach(engine => {
+      avgCostPerPromptByEngine[engine] = countsByEngine[engine] > 0 
+        ? costsByEngine[engine] / countsByEngine[engine]
+        : 0;
+    });
+
+    console.log(`✅ Found ${resultsCount} completed results with actual costs`);
+    console.log(`💰 Total actual cost: $${totalActualCost.toFixed(6)}`);
+    
+    // Log per-engine averages
+    Object.keys(avgCostPerPromptByEngine).forEach(engine => {
+      if (countsByEngine[engine] > 0) {
+        console.log(`   ${engine}: $${avgCostPerPromptByEngine[engine].toFixed(6)}/prompt (${countsByEngine[engine]} results)`);
+      }
+    });
+
+    return {
+      totalActualCost,
+      costsByEngine,
+      countsByEngine,
+      avgCostPerPromptByEngine,
+      resultsCount,
+      completedPrompts: [...new Set(data.map(r => r.prompt_id))].length
+    };
+
+  } catch (error) {
+    console.error('❌ Error in getActualCostsForPrompts:', error);
+    return null;
+  }
+}
+
 // Cost per engine (in USD)
 const COST_PER_ENGINE = {
   chatgpt: 0.004,
@@ -232,8 +318,9 @@ async function processPrompt(prompt) {
 
 async function runDailyCron() {
   const startTime = Date.now();
+  const batchStartTime = new Date().toISOString();
   console.log('\n🔄 Starting daily prompt refresh...');
-  console.log(`⏰ Time: ${new Date().toISOString()}\n`);
+  console.log(`⏰ Time: ${batchStartTime}\n`);
   
   try {
     // Fetch active prompts
@@ -281,15 +368,21 @@ async function runDailyCron() {
     const successful = results.filter(r => r.success).length;
     const failed = results.filter(r => !r.success).length;
 
-    // Calculate costs
-    const totalCost = successful * COST_PER_PROMPT;
-    const costBreakdown = {
+    // Calculate estimated costs (current system)
+    const estimatedTotalCost = successful * COST_PER_PROMPT;
+    const estimatedCostBreakdown = {
       chatgpt: successful * COST_PER_ENGINE.chatgpt,
       google: successful * COST_PER_ENGINE.google,
       gemini: successful * COST_PER_ENGINE.gemini,
       perplexity: successful * COST_PER_ENGINE.perplexity,
       claude: successful * COST_PER_ENGINE.claude
     };
+
+    // Get processed prompt IDs for actual cost lookup
+    const processedPromptIds = results
+      .filter(r => r.success && !r.dry_run)
+      .map(r => r.prompt_id || prompts[results.indexOf(r)]?.id)
+      .filter(Boolean);
 
     console.log('\n====================================');
     console.log('📊 Daily Cron Summary');
@@ -298,21 +391,21 @@ async function runDailyCron() {
     console.log(`❌ Failed: ${failed}`);
     console.log(`📞 API calls used: ${apiCallsUsed}/${MAX_CALLS}`);
     console.log(`⏱️  Duration: ${duration}s`);
-    console.log(`\n💰 Cost Summary:`);
-    console.log(`   Total cost: $${totalCost.toFixed(4)}`);
+    console.log(`\n💰 Estimated Cost Summary (Hardcoded Rates):`);
+    console.log(`   Total estimated: $${estimatedTotalCost.toFixed(4)}`);
     console.log(`   Cost per prompt: $${COST_PER_PROMPT.toFixed(4)}`);
     console.log(`   Avg per engine: $${AVG_COST_PER_ENGINE.toFixed(4)}`);
-    console.log(`\n   Breakdown by engine:`);
-    console.log(`   - ChatGPT: $${costBreakdown.chatgpt.toFixed(4)}`);
-    console.log(`   - Google: $${costBreakdown.google.toFixed(4)}`);
-    console.log(`   - Gemini: $${costBreakdown.gemini.toFixed(4)}`);
-    console.log(`   - Perplexity: $${costBreakdown.perplexity.toFixed(4)}`);
-    console.log(`   - Claude: $${costBreakdown.claude.toFixed(4)}`);
+    console.log(`\n   Estimated breakdown by engine:`);
+    console.log(`   - ChatGPT: $${estimatedCostBreakdown.chatgpt.toFixed(4)}`);
+    console.log(`   - Google: $${estimatedCostBreakdown.google.toFixed(4)}`);
+    console.log(`   - Gemini: $${estimatedCostBreakdown.gemini.toFixed(4)}`);
+    console.log(`   - Perplexity: $${estimatedCostBreakdown.perplexity.toFixed(4)}`);
+    console.log(`   - Claude: $${estimatedCostBreakdown.claude.toFixed(4)}`);
     console.log('====================================\n');
 
-    // Send summary to Slack (only if we processed prompts)
+    // Send initial summary to Slack with estimated costs (only if we processed prompts)
     if (successful > 0 || failed > 0) {
-      console.log('📊 Sending Slack notification...');
+      console.log('📊 Sending initial Slack notification with estimated costs...');
       await sendCronSummary({
         date: new Date().toISOString().split('T')[0],
         total_prompts: prompts.length,
@@ -321,11 +414,63 @@ async function runDailyCron() {
         duration,
         api_calls_used: apiCallsUsed,
         max_api_calls: MAX_CALLS,
-        total_cost: totalCost,
+        total_cost: estimatedTotalCost,
         cost_per_prompt: COST_PER_PROMPT,
         avg_cost_per_engine: AVG_COST_PER_ENGINE,
-        cost_breakdown: costBreakdown
+        cost_breakdown: estimatedCostBreakdown,
+        is_estimated: true // Flag to indicate these are estimates
       });
+
+      // Schedule actual cost calculation and follow-up notification
+      if (processedPromptIds.length > 0) {
+        console.log(`📊 Scheduling actual cost calculation for ${processedPromptIds.length} prompts...`);
+        
+        // Wait a bit for jobs to complete, then send actual costs
+        setTimeout(async () => {
+          try {
+            console.log('\n💰 Calculating actual costs from database...');
+            const actualCosts = await getActualCostsForPrompts(processedPromptIds, batchStartTime);
+            
+            if (actualCosts) {
+              const variance = actualCosts.totalActualCost - estimatedTotalCost;
+              const variancePercent = estimatedTotalCost > 0 
+                ? ((variance / estimatedTotalCost) * 100).toFixed(1)
+                : 0;
+
+              console.log(`💰 Actual vs Estimated Cost Analysis:`);
+              console.log(`   Estimated: $${estimatedTotalCost.toFixed(6)}`);
+              console.log(`   Actual: $${actualCosts.totalActualCost.toFixed(6)}`);
+              console.log(`   Variance: $${variance.toFixed(6)} (${variancePercent}%)`);
+              console.log(`   Completed: ${actualCosts.completedPrompts}/${processedPromptIds.length} prompts`);
+
+              // Send follow-up Slack notification with actual costs
+              await sendCronSummary({
+                date: new Date().toISOString().split('T')[0],
+                total_prompts: prompts.length,
+                successful: actualCosts.completedPrompts,
+                failed,
+                duration,
+                api_calls_used: apiCallsUsed,
+                max_api_calls: MAX_CALLS,
+                total_cost: actualCosts.totalActualCost,
+                cost_per_prompt: actualCosts.completedPrompts > 0 ? actualCosts.totalActualCost / actualCosts.completedPrompts : 0,
+                avg_cost_per_engine: actualCosts.totalActualCost / 5, // Rough average
+                cost_breakdown: actualCosts.costsByEngine,
+                counts_by_engine: actualCosts.countsByEngine,
+                avg_cost_per_prompt_by_engine: actualCosts.avgCostPerPromptByEngine,
+                is_actual: true, // Flag to indicate these are actual costs
+                estimated_cost: estimatedTotalCost,
+                cost_variance: variance,
+                variance_percent: variancePercent
+              });
+            } else {
+              console.log('⚠️  Could not retrieve actual costs - jobs may still be running');
+            }
+          } catch (error) {
+            console.error('❌ Error calculating actual costs:', error);
+          }
+        }, 120000); // Wait 2 minutes for jobs to complete
+      }
     } else {
       console.log('📊 No prompts processed - skipping Slack notification');
     }

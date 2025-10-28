@@ -24,15 +24,31 @@ export async function sendCronSummary(summary) {
     total_cost = 0,
     cost_per_prompt = 0,
     avg_cost_per_engine = 0,
-    cost_breakdown = {}
+    cost_breakdown = {},
+    counts_by_engine = {},
+    avg_cost_per_prompt_by_engine = {},
+    is_estimated = false,
+    is_actual = false,
+    estimated_cost = 0,
+    cost_variance = 0,
+    variance_percent = 0
   } = summary;
 
   const successRate = total_prompts > 0
     ? ((successful / total_prompts) * 100).toFixed(1)
     : 100;
 
-  // Choose emoji based on success
+  // Choose emoji based on success and cost type
   const emoji = failed === 0 ? '✅' : '⚠️';
+  const costTypeEmoji = is_actual ? '💰' : is_estimated ? '📊' : '💰';
+  
+  // Determine notification type
+  let notificationType = 'Cron Batch Summary';
+  if (is_estimated) {
+    notificationType = 'Cron Batch Summary (Estimated Costs)';
+  } else if (is_actual) {
+    notificationType = 'Actual Cost Update';
+  }
 
   // Generate timestamp for when this batch ran
   const timestamp = new Date().toLocaleString('en-US', { 
@@ -45,13 +61,13 @@ export async function sendCronSummary(summary) {
   });
 
   const message = {
-    text: `${emoji} Cron Batch Summary - ${timestamp} UTC`,
+    text: `${costTypeEmoji} ${notificationType} - ${timestamp} UTC`,
     blocks: [
       {
         type: "header",
         text: {
           type: "plain_text",
-          text: `${emoji} Cron Batch Summary - ${timestamp} UTC`,
+          text: `${costTypeEmoji} ${notificationType} - ${timestamp} UTC`,
           emoji: true
         }
       },
@@ -92,36 +108,60 @@ export async function sendCronSummary(summary) {
         fields: [
           {
             type: "mrkdwn",
-            text: `*💰 Total Cost:*\n$${total_cost.toFixed(4)}`
+            text: `*${costTypeEmoji} Total Cost:*\n$${total_cost.toFixed(6)}${is_estimated ? ' (est.)' : is_actual ? ' (actual)' : ''}`
           },
           {
             type: "mrkdwn",
-            text: `*📊 Cost/Prompt:*\n$${cost_per_prompt.toFixed(4)}`
+            text: `*📊 Cost/Prompt:*\n$${cost_per_prompt.toFixed(6)}`
           },
           {
             type: "mrkdwn",
-            text: `*📈 Avg/Engine:*\n$${avg_cost_per_engine.toFixed(4)}`
+            text: `*📈 Avg/Engine:*\n$${avg_cost_per_engine.toFixed(6)}`
+          },
+          ...(is_actual && estimated_cost > 0 ? [{
+            type: "mrkdwn",
+            text: `*📈 Variance:*\n$${cost_variance.toFixed(6)} (${variance_percent}%)`
+          }, {
+            type: "mrkdwn",
+            text: `*📊 Estimated:*\n$${estimated_cost.toFixed(6)}`
+          }] : []),
+          {
+            type: "mrkdwn",
+            text: `*ChatGPT:* $${(cost_breakdown.chatgpt || 0).toFixed(6)}\n*Google:* $${(cost_breakdown.google || 0).toFixed(6)}`
           },
           {
             type: "mrkdwn",
-            text: `*ChatGPT:* $${(cost_breakdown.chatgpt || 0).toFixed(4)}\n*Google:* $${(cost_breakdown.google || 0).toFixed(4)}`
+            text: `*Gemini:* $${(cost_breakdown.gemini || 0).toFixed(6)}\n*Perplexity:* $${(cost_breakdown.perplexity || 0).toFixed(6)}`
           },
           {
             type: "mrkdwn",
-            text: `*Gemini:* $${(cost_breakdown.gemini || 0).toFixed(4)}\n*Perplexity:* $${(cost_breakdown.perplexity || 0).toFixed(4)}`
-          },
-          {
-            type: "mrkdwn",
-            text: `*Claude:* $${(cost_breakdown.claude || 0).toFixed(4)}`
+            text: `*Claude:* $${(cost_breakdown.claude || 0).toFixed(6)}`
           }
         ]
       },
+      ...(is_actual && Object.keys(avg_cost_per_prompt_by_engine).length > 0 ? [{
+        type: "divider"
+      }, {
+        type: "section",
+        text: {
+          type: "mrkdwn",
+          text: "*📊 Average Cost Per Prompt By Engine:*"
+        }
+      }, {
+        type: "section",
+        fields: Object.keys(avg_cost_per_prompt_by_engine)
+          .filter(engine => (counts_by_engine[engine] || 0) > 0)
+          .map(engine => ({
+            type: "mrkdwn",
+            text: `*${engine.charAt(0).toUpperCase() + engine.slice(1)}:*\n$${avg_cost_per_prompt_by_engine[engine].toFixed(6)}/prompt\n(${counts_by_engine[engine]} results)`
+          }))
+      }] : []),
       {
         type: "context",
         elements: [
           {
             type: "mrkdwn",
-            text: `⏰ Generated at ${new Date().toISOString()} | 🔄 Per-prompt scheduling active`
+            text: `⏰ Generated at ${new Date().toISOString()} | 🔄 Per-prompt scheduling active${is_estimated ? ' | 📊 Costs are estimates' : is_actual ? ' | 💰 Actual costs from database' : ''}`
           }
         ]
       }
