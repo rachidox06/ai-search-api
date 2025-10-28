@@ -310,20 +310,25 @@ async function runDailyCron() {
     console.log(`   - Claude: $${costBreakdown.claude.toFixed(4)}`);
     console.log('====================================\n');
 
-    // Send summary to Slack
-    await sendCronSummary({
-      date: new Date().toISOString().split('T')[0],
-      total_prompts: prompts.length,
-      successful,
-      failed,
-      duration,
-      api_calls_used: apiCallsUsed,
-      max_api_calls: MAX_CALLS,
-      total_cost: totalCost,
-      cost_per_prompt: COST_PER_PROMPT,
-      avg_cost_per_engine: AVG_COST_PER_ENGINE,
-      cost_breakdown: costBreakdown
-    });
+    // Send summary to Slack (only if we processed prompts)
+    if (successful > 0 || failed > 0) {
+      console.log('📊 Sending Slack notification...');
+      await sendCronSummary({
+        date: new Date().toISOString().split('T')[0],
+        total_prompts: prompts.length,
+        successful,
+        failed,
+        duration,
+        api_calls_used: apiCallsUsed,
+        max_api_calls: MAX_CALLS,
+        total_cost: totalCost,
+        cost_per_prompt: COST_PER_PROMPT,
+        avg_cost_per_engine: AVG_COST_PER_ENGINE,
+        cost_breakdown: costBreakdown
+      });
+    } else {
+      console.log('📊 No prompts processed - skipping Slack notification');
+    }
     
   } catch (error) {
     console.error('\n❌ Cron job failed:', error.message);

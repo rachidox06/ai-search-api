@@ -34,14 +34,24 @@ export async function sendCronSummary(summary) {
   // Choose emoji based on success
   const emoji = failed === 0 ? '✅' : '⚠️';
 
+  // Generate timestamp for when this batch ran
+  const timestamp = new Date().toLocaleString('en-US', { 
+    timeZone: 'UTC', 
+    hour12: false,
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit'
+  });
+
   const message = {
-    text: `${emoji} Daily Cron Summary - ${date}`,
+    text: `${emoji} Cron Batch Summary - ${timestamp} UTC`,
     blocks: [
       {
         type: "header",
         text: {
           type: "plain_text",
-          text: `${emoji} Daily Cron Summary - ${date}`,
+          text: `${emoji} Cron Batch Summary - ${timestamp} UTC`,
           emoji: true
         }
       },
@@ -111,7 +121,7 @@ export async function sendCronSummary(summary) {
         elements: [
           {
             type: "mrkdwn",
-            text: `⏰ Generated at ${new Date().toISOString()}`
+            text: `⏰ Generated at ${new Date().toISOString()} | 🔄 Per-prompt scheduling active`
           }
         ]
       }
