@@ -9,7 +9,7 @@ import { alertJobFailed, alertBrandExtractionNotQueued } from './libs/alerting.j
 const { REDIS_HOST, REDIS_PORT = 6379, REDIS_PASSWORD, OPENROUTER_API_KEY } = process.env;
 
 // Function to query Claude via OpenRouter API
-async function queryClaude(prompt, location = 'United States', model = 'anthropic/claude-4.5-sonnet') {
+async function queryClaude(prompt, location = 'United States', model = 'anthropic/claude-haiku-4.5') {
   if (!OPENROUTER_API_KEY) {
     throw new Error('Missing OPENROUTER_API_KEY');
   }
@@ -103,7 +103,7 @@ async function runJob(jobData) {
     brand_name,
     brand_aliases,
     user_id,
-    model = 'anthropic/claude-4.5-sonnet' // Default Claude model
+    model = 'anthropic/claude-haiku-4.5' // Default Claude model
   } = jobData;
 
   // Use location if provided, otherwise fall back to locale

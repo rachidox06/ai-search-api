@@ -202,7 +202,7 @@ export async function normalizeResponse(engine, dataforseoResponse, brandContext
       answer_markdown = result?.markdown || result?.answer || '';
       answer_text = stripMarkdown(answer_markdown);
 
-      model = result?.model || 'anthropic/claude-4.5-sonnet';
+      model = result?.model || 'anthropic/claude-haiku-4.5';
       apiCost = task?.cost || 0;
 
       // Extract citations from Claude response (deduplicate by URL)
