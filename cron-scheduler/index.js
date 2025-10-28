@@ -3,7 +3,7 @@ import cron from 'node-cron';
 import { createClient } from '@supabase/supabase-js';
 import dotenv from 'dotenv';
 import { sendCronSummary } from './slackNotifier.js';
-import { getEnabledEngines, shouldRunPrompt } from './libs/locationMapping.js';
+import { getEnabledEngines, shouldRunPrompt, calculateNextRunAt } from './libs/locationMapping.js';
 
 dotenv.config();
 
@@ -11,7 +11,7 @@ const {
   SUPABASE_URL,
   SUPABASE_SERVICE_ROLE_KEY,
   API_URL,
-  CRON_SCHEDULE = '0 2 * * *', // Default: 2 AM daily
+  CRON_SCHEDULE = '0 * * * *', // Default: Every hour (changed from daily for per-prompt scheduling)
   MAX_API_CALLS_PER_RUN = '500',
   DRY_RUN = 'false'
 } = process.env;
@@ -53,13 +53,16 @@ const COST_PER_ENGINE = {
 const COST_PER_PROMPT = Object.values(COST_PER_ENGINE).reduce((sum, cost) => sum + cost, 0);
 const AVG_COST_PER_ENGINE = COST_PER_PROMPT / DEFAULT_ENGINES.length;
 
-console.log('🚀 AI Search Cron Scheduler Started');
+console.log('🚀 AI Search Cron Scheduler Started (Per-Prompt Scheduling)');
 console.log('====================================');
-console.log(`📅 Schedule: ${CRON_SCHEDULE}`);
+console.log(`📅 Schedule: ${CRON_SCHEDULE} (hourly check for due prompts)`);
 console.log(`🔢 Max API calls per run: ${MAX_CALLS}`);
 console.log(`📝 Max prompts per run: ~${MAX_PROMPTS} (varies by tracking_config)`);
 console.log(`🎯 API URL: ${apiUrl}`);
 console.log(`🧪 Dry run: ${DRY_RUN === 'true' ? 'YES (no API calls)' : 'NO'}`);
+console.log(`\n⏰ Scheduling Mode: PER-PROMPT (based on next_run_at)`);
+console.log(`   Each prompt runs on its own schedule based on when it was created/last run`);
+console.log(`   No more fixed 2 AM global schedule!`);
 console.log(`\n💰 Max cost per prompt (all engines): $${COST_PER_PROMPT.toFixed(4)}`);
 console.log(`   - ChatGPT: $${COST_PER_ENGINE.chatgpt.toFixed(4)}`);
 console.log(`   - Google: $${COST_PER_ENGINE.google.toFixed(4)}`);
@@ -70,7 +73,9 @@ console.log('====================================\n');
 
 async function fetchActivePrompts() {
   try {
-    console.log('📋 Fetching active prompts from Supabase...');
+    console.log('📋 Fetching prompts due for execution...');
+
+    const now = new Date().toISOString();
 
     const { data, error } = await supabase
       .from('prompts')
@@ -83,6 +88,7 @@ async function fetchActivePrompts() {
         check_frequency,
         tracking_config,
         last_run_at,
+        next_run_at,
         is_active,
         websites!website_id (
           id,
@@ -92,8 +98,9 @@ async function fetchActivePrompts() {
         )
       `)
       .eq('is_active', true) // IMPORTANT: Only fetch active prompts
-      .order('created_at', { ascending: true })
-      .limit(MAX_PROMPTS * 2); // Fetch more since we'll filter by frequency
+      .lte('next_run_at', now) // NEW: Only fetch prompts due to run (next_run_at <= NOW)
+      .order('next_run_at', { ascending: true }) // Process oldest scheduled first
+      .limit(MAX_PROMPTS);
 
     if (error) {
       console.error('❌ Supabase error:', error);
@@ -101,31 +108,21 @@ async function fetchActivePrompts() {
     }
 
     if (!data || data.length === 0) {
-      console.log('⚠️  No active prompts found');
+      console.log('✅ No prompts due for execution at this time');
       return [];
     }
 
-    // Filter prompts based on is_active, check_frequency, and last_run_at
-    const filteredPrompts = data.filter(prompt => {
-      // Double-check is_active (defensive check, already filtered by SQL)
-      if (!prompt.is_active) {
-        console.log(`⏭️  Skipping inactive prompt ${prompt.id}`);
-        return false;
-      }
-
-      // Check if prompt should run based on frequency
-      const shouldRun = shouldRunPrompt(prompt.check_frequency, prompt.last_run_at);
-      if (!shouldRun) {
-        console.log(`⏭️  Skipping prompt ${prompt.id} (${prompt.check_frequency}, last run: ${prompt.last_run_at})`);
-      }
-      return shouldRun;
+    console.log(`✅ Found ${data.length} prompt(s) due for execution`);
+    
+    // Log upcoming schedule for visibility
+    data.forEach(p => {
+      const overdue = p.next_run_at ? 
+        ((new Date() - new Date(p.next_run_at)) / 1000 / 60).toFixed(0) : 
+        'never run';
+      console.log(`   - Prompt ${p.id}: scheduled ${p.next_run_at} (${overdue} min ago)`);
     });
 
-    // Limit to MAX_PROMPTS after filtering
-    const limitedPrompts = filteredPrompts.slice(0, MAX_PROMPTS);
-
-    console.log(`✅ Found ${data.length} active prompt(s), ${filteredPrompts.length} due to run, processing ${limitedPrompts.length}`);
-    return limitedPrompts;
+    return data;
 
   } catch (error) {
     console.error('❌ Failed to fetch prompts:', error.message);
@@ -134,7 +131,7 @@ async function fetchActivePrompts() {
 }
 
 async function processPrompt(prompt) {
-  const { id, content, website_id, websites, location, tracking_config } = prompt;
+  const { id, content, website_id, websites, location, tracking_config, check_frequency } = prompt;
 
   if (!websites) {
     console.error(`⚠️  Skipping prompt ${id}: No website data found`);
@@ -157,9 +154,15 @@ async function processPrompt(prompt) {
     console.log(`     Website: ${websites.domain}`);
     console.log(`     Location: ${location || 'United States'}`);
     console.log(`     Engines: ${enabledEngines.join(', ')} (${enabledEngines.length})`);
+    console.log(`     Frequency: ${check_frequency}`);
 
     if (DRY_RUN === 'true') {
       console.log('     🧪 DRY RUN - Skipping actual API call');
+      
+      // Still calculate next run time for testing
+      const nextRunAt = calculateNextRunAt(check_frequency);
+      console.log(`     📅 Would schedule next run at: ${nextRunAt}`);
+      
       return {
         success: true,
         prompt_id: id,
@@ -191,20 +194,32 @@ async function processPrompt(prompt) {
     console.log(`     ✅ Queued successfully`);
     console.log(`     Job IDs:`, result.job_ids);
 
-    // Update last_run_at timestamp in Supabase
+    // Calculate next run time
+    const now = new Date();
+    const nextRunAt = calculateNextRunAt(check_frequency, now);
+
+    // Update last_run_at AND next_run_at in Supabase
     try {
       const { error: updateError } = await supabase
         .from('prompts')
-        .update({ last_run_at: new Date().toISOString() })
+        .update({ 
+          last_run_at: now.toISOString(),
+          next_run_at: nextRunAt
+        })
         .eq('id', id);
 
       if (updateError) {
-        console.error(`     ⚠️  Failed to update last_run_at:`, updateError.message);
+        console.error(`     ⚠️  Failed to update run times:`, updateError.message);
       } else {
-        console.log(`     📅 Updated last_run_at`);
+        console.log(`     📅 Updated last_run_at: ${now.toISOString()}`);
+        console.log(`     📅 Scheduled next_run_at: ${nextRunAt}`);
+        
+        // Calculate and display time until next run
+        const hoursUntilNext = ((new Date(nextRunAt) - now) / 1000 / 60 / 60).toFixed(1);
+        console.log(`     ⏰ Next run in: ${hoursUntilNext} hours`);
       }
     } catch (updateErr) {
-      console.error(`     ⚠️  Error updating last_run_at:`, updateErr.message);
+      console.error(`     ⚠️  Error updating run times:`, updateErr.message);
     }
 
     return { success: true, engines_count: enabledEngines.length, ...result };

@@ -210,29 +210,46 @@ export function getEnabledEngines(trackingConfig) {
 }
 
 /**
- * Check if a prompt should be run based on check_frequency and last_run_at
- * @param {string} checkFrequency - 'daily' or 'weekly'
- * @param {Date|string|null} lastRunAt - Last run timestamp
+ * Check if a prompt should be run based on next_run_at (NEW: per-prompt scheduling)
+ * @param {Date|string|null} nextRunAt - Scheduled next run timestamp
  * @returns {boolean} - true if prompt should run
  */
-export function shouldRunPrompt(checkFrequency, lastRunAt) {
-  // If never run before, always run
-  if (!lastRunAt) {
+export function shouldRunPrompt(nextRunAt) {
+  // If next_run_at is null, run immediately (safety fallback)
+  if (!nextRunAt) {
     return true;
   }
 
   const now = new Date();
-  const lastRun = new Date(lastRunAt);
-  const daysSinceLastRun = (now - lastRun) / (1000 * 60 * 60 * 24);
+  const nextRun = new Date(nextRunAt);
+  
+  // Run if we've reached or passed the scheduled time
+  return now >= nextRun;
+}
 
-  if (checkFrequency === 'daily') {
-    // Run if more than 1 day has passed
-    return daysSinceLastRun >= 1;
+/**
+ * Calculate the next run time based on frequency
+ * @param {string} checkFrequency - 'hourly', 'daily', or 'weekly'
+ * @param {Date|string} fromTime - Base time to calculate from (defaults to now)
+ * @returns {string} - ISO timestamp for next run
+ */
+export function calculateNextRunAt(checkFrequency, fromTime = new Date()) {
+  const baseTime = new Date(fromTime);
+  
+  if (checkFrequency === 'hourly') {
+    // Add 1 hour
+    baseTime.setHours(baseTime.getHours() + 1);
+  } else if (checkFrequency === 'daily') {
+    // Add 1 day
+    baseTime.setDate(baseTime.getDate() + 1);
   } else if (checkFrequency === 'weekly') {
-    // Run if more than 7 days have passed
-    return daysSinceLastRun >= 7;
+    // Add 7 days
+    baseTime.setDate(baseTime.getDate() + 7);
+  } else {
+    // Unknown frequency: default to 1 day
+    console.warn(`Unknown check_frequency: ${checkFrequency}, defaulting to daily`);
+    baseTime.setDate(baseTime.getDate() + 1);
   }
-
-  // Default: don't run if unknown frequency
-  return false;
+  
+  return baseTime.toISOString();
 }

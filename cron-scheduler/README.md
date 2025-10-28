@@ -1,14 +1,23 @@
 # AI Search Cron Scheduler
 
-Automatically refreshes all active prompts once per day by calling the AI search API.
+Automatically refreshes active prompts based on their individual schedules by calling the AI search API.
 
 ## What It Does
 
-1. Runs on a schedule (default: 2 AM daily)
-2. Fetches all prompts where `is_active = true` from Supabase
-3. Calls `/api/v1/prompt-runs/batch` for each prompt with all 5 engines
-4. Respects API call limits (default: 500 calls = 100 prompts max)
-5. Logs progress and results
+1. Runs on a schedule (default: **Every hour**)
+2. Fetches prompts where `is_active = true` AND `next_run_at <= NOW()` from Supabase
+3. Calls `/api/v1/prompt-runs/batch` for each due prompt
+4. Updates `next_run_at` based on each prompt's `check_frequency`
+5. Respects API call limits (default: 500 calls = 100 prompts max)
+6. Logs progress and results
+
+## ✨ New: Per-Prompt Scheduling
+
+**No more fixed 2 AM schedule for everyone!** Each prompt now runs on its own schedule:
+
+- User signs up at 3 PM → Their prompts run at 3 PM daily
+- User signs up at 10 AM → Their prompts run at 10 AM daily
+- **No 24-hour gap issues** - each prompt runs exactly 24 hours after its last run
 
 ## Railway Setup
 
@@ -30,9 +39,10 @@ In Railway's service settings, add these variables:
 - `API_URL` - Your main API URL (e.g., `https://your-api.railway.app`)
 
 **Optional:**
-- `CRON_SCHEDULE` - When to run (default: `0 2 * * *` = 2 AM daily)
+- `CRON_SCHEDULE` - When to check for due prompts (default: `0 * * * *` = every hour)
 - `MAX_API_CALLS_PER_RUN` - Safety limit (default: `500`)
 - `SKIP_INITIAL_RUN` - Set to `true` to skip run on startup (default: `false`)
+- `DRY_RUN` - Set to `true` to test without making actual API calls (default: `false`)
 
 ### Step 3: Deploy
 
@@ -50,10 +60,12 @@ Railway will automatically:
 
 Standard cron syntax: `minute hour day month weekday`
 
-- `0 2 * * *` - Every day at 2:00 AM (default)
-- `0 */6 * * *` - Every 6 hours
-- `0 0 * * 1` - Every Monday at midnight
-- `0 12 * * *` - Every day at noon
+- `0 * * * *` - Every hour (default - recommended for per-prompt scheduling)
+- `*/30 * * * *` - Every 30 minutes (more precise scheduling)
+- `*/15 * * * *` - Every 15 minutes (most precise, higher overhead)
+- `0 */6 * * *` - Every 6 hours (less frequent checks)
+
+**Note:** With per-prompt scheduling, the cron just checks which prompts are due. The actual run frequency is determined by each prompt's `check_frequency` and `next_run_at` fields.
 
 ### API Call Limits
 
@@ -65,19 +77,23 @@ With 5 engines per prompt:
 ## Monitoring in Railway
 
 View the **Logs** tab in your Railway service to see:
-- ✅ Number of active prompts found
-- 📤 Each prompt being processed
+- ✅ Number of prompts due for execution
+- 📅 Scheduled time vs actual run time for each prompt
+- 📤 Each prompt being processed with its frequency
+- ⏰ Next scheduled run time after processing
 - ✅/❌ Success/failure for each request
-- 📊 Daily summary with totals and API calls used
+- 📊 Summary with totals and API calls used
 
 ## Troubleshooting
 
 | Problem | Solution |
 |---------|----------|
-| **No prompts found** | Check `is_active` column in Supabase prompts table |
+| **No prompts found** | Check `is_active` and `next_run_at` in Supabase prompts table |
+| **Prompts not running** | Verify `next_run_at <= NOW()` for those prompts in database |
 | **API errors** | Verify `API_URL` is correct and main API is running |
 | **Cron not running** | Check Railway logs for errors, verify `CRON_SCHEDULE` syntax |
 | **Hitting limits** | Reduce `MAX_API_CALLS_PER_RUN` or deactivate some prompts |
+| **Prompts running too early/late** | Check `next_run_at` calculation - should be `last_run_at + frequency` |
 
 ## Testing Before Production
 
