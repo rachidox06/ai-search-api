@@ -9,6 +9,53 @@ import { alertJobFailed, alertBrandExtractionNotQueued } from './libs/alerting.j
 
 const { REDIS_HOST, REDIS_PORT = 6379, REDIS_PASSWORD, GEMINI_API_KEY } = process.env;
 
+// Gemini pricing per 1M tokens (as of latest pricing)
+const GEMINI_PRICING = {
+  input: {
+    text: 0.30,      // $0.30 per 1M tokens for text/image/video
+    audio: 1.00      // $1.00 per 1M tokens for audio
+  },
+  output: {
+    text: 2.50,      // $2.50 per 1M tokens (including thinking tokens)
+    audio: 12.00     // $12.00 per 1M tokens for audio
+  }
+};
+
+// Function to calculate Gemini API cost based on token usage
+function calculateGeminiCost(usageMetadata) {
+  if (!usageMetadata) return 0;
+  
+  const {
+    promptTokenCount = 0,
+    candidatesTokenCount = 0,
+    thoughtsTokenCount = 0,
+    totalTokenCount = 0
+  } = usageMetadata;
+  
+  // For now, assume text-based interactions (most common case)
+  // Input cost: prompt tokens at text input rate
+  const inputCost = (promptTokenCount / 1_000_000) * GEMINI_PRICING.input.text;
+  
+  // Output cost: candidates + thoughts tokens at text output rate
+  // (thoughts tokens are included in output pricing according to the pricing table)
+  const outputTokens = candidatesTokenCount + (thoughtsTokenCount || 0);
+  const outputCost = (outputTokens / 1_000_000) * GEMINI_PRICING.output.text;
+  
+  const totalCost = inputCost + outputCost;
+  
+  console.log(`💰 Gemini cost calculation:`, {
+    promptTokens: promptTokenCount,
+    candidatesTokens: candidatesTokenCount,
+    thoughtsTokens: thoughtsTokenCount,
+    totalTokens: totalTokenCount,
+    inputCost: inputCost.toFixed(6),
+    outputCost: outputCost.toFixed(6),
+    totalCost: totalCost.toFixed(6)
+  });
+  
+  return totalCost;
+}
+
 // Function to query Google Gemini API
 async function queryGemini(prompt, location = 'United States') {
   if (!GEMINI_API_KEY) {
@@ -144,13 +191,17 @@ async function runJob(jobData) {
   const result = await queryGemini(prompt_text, searchLocation);
   console.log('✅ Gemini API response received:', {
     citations_count: result.citations?.length || 0,
-    search_queries_count: result.searchQueries?.length || 0
+    search_queries_count: result.searchQueries?.length || 0,
+    tokens_used: result.rawResponse?.usageMetadata?.totalTokenCount || 0
   });
+
+  // Calculate cost based on token usage from raw response
+  const calculatedCost = calculateGeminiCost(result.rawResponse?.usageMetadata);
 
   // Convert Gemini response to DataForSEO-like format for normalization
   const dataforseoFormat = {
     tasks: [{
-      cost: 0, // Gemini is free/direct API
+      cost: calculatedCost, // Calculate cost based on actual token usage
       result: [{
         markdown: result.enhancedText || result.text,
         answer: result.text,
