@@ -1,7 +1,7 @@
 import { Job } from 'bullmq';
 import { BrandExtractionJob, BrandExtractionResult } from '../types';
 import { BrandExtractorService } from '../services/brandExtractor';
-import { createSupabaseClient, saveBrandExtractionResult } from '../services/supabase';
+import { createSupabaseClient, saveCompleteExtractionResult } from '../services/supabase';
 import { config } from '../config';
 
 const brandExtractor = new BrandExtractorService();
@@ -37,7 +37,8 @@ export async function processBrandExtraction(job: Job<BrandExtractionJob>): Prom
     console.log(`[Processor] Processing time: ${extraction.processingTime}ms`);
     
     // Save to database using this job's dedicated client
-    await saveBrandExtractionResult(
+    // This now saves to ALL tables: prompt_tracking_results, brand_mentions, analytics_facts, prompt_citations
+    await saveCompleteExtractionResult(
       supabaseClient,
       resultId,
       extraction.brands,

@@ -13,6 +13,80 @@ export function createSupabaseClient(): SupabaseClient {
 }
 
 /**
+ * Types for database operations
+ */
+interface ResultWithPromptData {
+  id: string;
+  prompt_id: string;
+  engine: string;
+  model: string | null;
+  checked_at: string;
+  total_citations: number;
+  answer_length: number | null;
+  citations: any[] | null;
+  prompts: {
+    id: string;
+    website_id: string;
+    content: string;
+    location: string;
+    language: string;
+    device: string;
+    source: string;
+    tag: any[] | null;
+    websites: {
+      id: string;
+      domain: string;
+    };
+  };
+}
+
+interface BrandMentionInsert {
+  result_id: string;
+  brand_name: string;
+  ranking: number | null;
+  sentiment: number | null;
+  brand_website: string | null;
+}
+
+interface AnalyticsFactInsert {
+  website_id: string;
+  date: string;
+  engine: string;
+  tag: string;
+  location: string;
+  language: string;
+  device: string;
+  model: string | null;
+  prompt_source: string;
+  prompt_id: string;
+  prompt_content: string | null;
+  result_id: string;
+  brand_slug: string;
+  brand_name: string;
+  brand_website: string | null;
+  is_own_brand: boolean;
+  mention_count: number;
+  ranking_position: number | null;
+  sentiment_score: number | null;
+  total_citations: number;
+  own_brand_citations: number;
+  response_length: number | null;
+  has_answer: boolean;
+  checked_at: string;
+}
+
+interface PromptCitationInsert {
+  result_id: string;
+  citation_number: number;
+  citation_url: string;
+  citation_title: string | null;
+  citation_domain: string | null;
+  is_own_website: boolean;
+  citation_snippet: string | null;
+  rank_absolute: number | null;
+}
+
+/**
  * Save brand extraction result to database
  * @param client - Supabase client instance (created per job)
  * @param resultId - Result ID to update
@@ -66,5 +140,317 @@ export async function getAnswerText(
   }
   
   return data.answer_text;
+}
+
+/**
+ * Fetch result with prompt and website data needed for analytics
+ */
+export async function getResultWithPromptData(
+  client: SupabaseClient,
+  resultId: string
+): Promise<ResultWithPromptData> {
+  const { data, error } = await client
+    .from('prompt_tracking_results')
+    .select(`
+      id,
+      prompt_id,
+      engine,
+      model,
+      checked_at,
+      total_citations,
+      answer_length,
+      citations,
+      prompts!inner (
+        id,
+        website_id,
+        content,
+        location,
+        language,
+        device,
+        source,
+        tag,
+        websites!inner (
+          id,
+          domain
+        )
+      )
+    `)
+    .eq('id', resultId)
+    .single();
+    
+  if (error || !data) {
+    throw new Error(`Failed to fetch result data: ${error?.message}`);
+  }
+  
+  return data as any;
+}
+
+/**
+ * Call normalize_brand_name Postgres function
+ */
+export async function normalizeBrandName(
+  client: SupabaseClient,
+  brandName: string
+): Promise<string> {
+  const { data, error } = await client.rpc('normalize_brand_name', {
+    brand_name: brandName
+  });
+  
+  if (error) {
+    console.warn(`[Supabase] Failed to normalize brand name "${brandName}": ${error.message}`);
+    // Fallback to simple normalization
+    return brandName.toLowerCase().trim();
+  }
+  
+  return data || brandName.toLowerCase().trim();
+}
+
+/**
+ * Call is_own_brand_fuzzy Postgres function
+ */
+export async function isOwnBrandFuzzy(
+  client: SupabaseClient,
+  websiteId: string,
+  brandName: string
+): Promise<boolean> {
+  const { data, error } = await client.rpc('is_own_brand_fuzzy', {
+    p_website_id: websiteId,
+    brand_name_input: brandName
+  });
+  
+  if (error) {
+    console.warn(`[Supabase] Failed to check is_own_brand for "${brandName}": ${error.message}`);
+    return false;
+  }
+  
+  return data || false;
+}
+
+/**
+ * Calculate own brand citations count
+ */
+export function calculateOwnBrandCitations(
+  citations: any[] | null,
+  websiteDomain: string
+): number {
+  if (!citations || citations.length === 0) {
+    return 0;
+  }
+  
+  return citations.filter(citation => {
+    const domain = citation.domain || '';
+    const url = citation.url || '';
+    return domain.toLowerCase().includes(websiteDomain.toLowerCase()) ||
+           url.toLowerCase().includes(websiteDomain.toLowerCase());
+  }).length;
+}
+
+/**
+ * Insert brand mentions directly (replacing trigger logic)
+ */
+export async function insertBrandMentions(
+  client: SupabaseClient,
+  resultId: string,
+  brands: any[]
+): Promise<void> {
+  if (!brands || brands.length === 0) {
+    console.log(`[Supabase] No brands to insert for result ${resultId}`);
+    return;
+  }
+  
+  const mentions: BrandMentionInsert[] = brands
+    .filter(brand => brand.name && brand.name.trim())
+    .map(brand => ({
+      result_id: resultId,
+      brand_name: brand.name.trim(),
+      ranking: brand.ranking_position ? parseInt(brand.ranking_position) : null,
+      sentiment: brand.sentiment ? parseInt(brand.sentiment) : null,
+      brand_website: brand.domain && brand.domain.trim() ? brand.domain.trim() : null
+    }));
+  
+  if (mentions.length === 0) {
+    console.log(`[Supabase] No valid brands to insert for result ${resultId}`);
+    return;
+  }
+  
+  console.log(`[Supabase] Inserting ${mentions.length} brand mentions`);
+  
+  const { error } = await client
+    .from('brand_mentions')
+    .insert(mentions);
+    
+  if (error) {
+    throw new Error(`Failed to insert brand mentions: ${error.message}`);
+  }
+  
+  console.log(`[Supabase] ✅ Inserted ${mentions.length} brand mentions`);
+}
+
+/**
+ * Insert analytics facts directly (replacing trigger logic)
+ */
+export async function insertAnalyticsFacts(
+  client: SupabaseClient,
+  resultData: ResultWithPromptData,
+  brands: any[]
+): Promise<void> {
+  if (!brands || brands.length === 0) {
+    console.log(`[Supabase] No brands for analytics facts`);
+    return;
+  }
+  
+  const websiteId = resultData.prompts.websites.id;
+  const websiteDomain = resultData.prompts.websites.domain;
+  const tags = resultData.prompts.tag || [];
+  const tagArray = Array.isArray(tags) ? tags : ['untagged'];
+  const finalTags = tagArray.length === 0 ? ['untagged'] : tagArray;
+  
+  const date = new Date(resultData.checked_at).toISOString().split('T')[0];
+  const ownBrandCitations = calculateOwnBrandCitations(resultData.citations, websiteDomain);
+  
+  const facts: AnalyticsFactInsert[] = [];
+  
+  // For each brand, create one row per tag
+  for (const brand of brands) {
+    if (!brand.name || !brand.name.trim()) continue;
+    
+    const brandName = brand.name.trim();
+    const brandSlug = await normalizeBrandName(client, brandName);
+    const isOwnBrand = await isOwnBrandFuzzy(client, websiteId, brandName);
+    
+    for (const tag of finalTags) {
+      facts.push({
+        website_id: websiteId,
+        date,
+        engine: resultData.engine,
+        tag: tag,
+        location: resultData.prompts.location || 'United States',
+        language: resultData.prompts.language || 'en',
+        device: resultData.prompts.device || 'desktop',
+        model: resultData.model,
+        prompt_source: resultData.prompts.source || 'user_added',
+        prompt_id: resultData.prompt_id,
+        prompt_content: resultData.prompts.content,
+        result_id: resultData.id,
+        brand_slug: brandSlug,
+        brand_name: brandName,
+        brand_website: brand.domain && brand.domain.trim() ? brand.domain.trim() : null,
+        is_own_brand: isOwnBrand,
+        mention_count: 1,
+        ranking_position: brand.ranking_position ? parseInt(brand.ranking_position) : null,
+        sentiment_score: brand.sentiment ? parseFloat(brand.sentiment) : null,
+        total_citations: resultData.total_citations || 0,
+        own_brand_citations: ownBrandCitations,
+        response_length: resultData.answer_length,
+        has_answer: (resultData.answer_length || 0) > 0,
+        checked_at: resultData.checked_at
+      });
+    }
+  }
+  
+  if (facts.length === 0) {
+    console.log(`[Supabase] No analytics facts to insert`);
+    return;
+  }
+  
+  console.log(`[Supabase] Inserting ${facts.length} analytics facts (${brands.length} brands × ${finalTags.length} tags)`);
+  
+  // Use upsert with conflict resolution on (result_id, brand_slug, tag)
+  const { error } = await client
+    .from('analytics_facts')
+    .upsert(facts, {
+      onConflict: 'result_id,brand_slug,tag',
+      ignoreDuplicates: false
+    });
+    
+  if (error) {
+    throw new Error(`Failed to insert analytics facts: ${error.message}`);
+  }
+  
+  console.log(`[Supabase] ✅ Inserted ${facts.length} analytics facts`);
+}
+
+/**
+ * Insert prompt citations directly (replacing trigger logic)
+ */
+export async function insertPromptCitations(
+  client: SupabaseClient,
+  resultId: string,
+  citations: any[] | null
+): Promise<void> {
+  if (!citations || citations.length === 0) {
+    console.log(`[Supabase] No citations to insert for result ${resultId}`);
+    return;
+  }
+  
+  const citationInserts: PromptCitationInsert[] = citations
+    .filter(citation => citation.url && citation.number)
+    .map(citation => ({
+      result_id: resultId,
+      citation_number: parseInt(citation.number),
+      citation_url: citation.url,
+      citation_title: citation.title || null,
+      citation_domain: citation.domain?.includes('vertexaisearch.cloud.google.com')
+        ? citation.title
+        : citation.domain || null,
+      is_own_website: citation.is_own_website === true,
+      citation_snippet: citation.snippet && citation.snippet.trim() ? citation.snippet : null,
+      rank_absolute: citation.number ? parseInt(citation.number) : null
+    }));
+  
+  if (citationInserts.length === 0) {
+    console.log(`[Supabase] No valid citations to insert`);
+    return;
+  }
+  
+  console.log(`[Supabase] Inserting ${citationInserts.length} citations`);
+  
+  const { error } = await client
+    .from('prompt_citations')
+    .insert(citationInserts);
+    
+  if (error) {
+    throw new Error(`Failed to insert citations: ${error.message}`);
+  }
+  
+  console.log(`[Supabase] ✅ Inserted ${citationInserts.length} citations`);
+}
+
+/**
+ * MAIN: Save all brand extraction data to related tables
+ * This replaces the trigger-based logic with direct Railway inserts
+ */
+export async function saveCompleteExtractionResult(
+  client: SupabaseClient,
+  resultId: string,
+  brands: any[],
+  cost: number
+): Promise<void> {
+  console.log(`[Supabase] 🚀 Starting complete extraction save for result ${resultId}`);
+  console.log(`[Supabase] Processing ${brands.length} brands`);
+  
+  try {
+    // Step 1: Update extracted_brands column in prompt_tracking_results
+    await saveBrandExtractionResult(client, resultId, brands, cost);
+    
+    // Step 2: Fetch all necessary data for downstream inserts
+    console.log(`[Supabase] Fetching result and prompt data...`);
+    const resultData = await getResultWithPromptData(client, resultId);
+    
+    // Step 3: Insert into brand_mentions (replaces sync_brand_mentions trigger)
+    await insertBrandMentions(client, resultId, brands);
+    
+    // Step 4: Insert into analytics_facts (replaces populate_analytics_facts trigger)
+    await insertAnalyticsFacts(client, resultData, brands);
+    
+    // Step 5: Insert into prompt_citations (replaces sync_prompt_citations trigger)
+    await insertPromptCitations(client, resultId, resultData.citations);
+    
+    console.log(`[Supabase] ✅✅✅ Complete extraction save successful for ${resultId}`);
+    
+  } catch (error: any) {
+    console.error(`[Supabase] ❌ Failed to save complete extraction:`, error.message);
+    throw error;
+  }
 }
 
