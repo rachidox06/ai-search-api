@@ -24,15 +24,16 @@ Return ONLY a JSON array of objects (no prose, no code fences). Each object must
 ]
 
 Rules - ONLY extract brands that meet ALL these criteria:
-- **SAME CATEGORY**: Extract brands that are in the SAME product category as "{trackedBrand}", including "{trackedBrand}" itself if mentioned
-- **IMPORTANT**: If "{trackedBrand}" is mentioned in the response, you MUST extract it along with competitors
+- **ACTUALLY MENTIONED**: ONLY extract brands that are EXPLICITLY MENTIONED in the response text below
+- **SAME CATEGORY**: Extract brands that are in the SAME product category as "{trackedBrand}"
+- **CRITICAL**: For "{trackedBrand}" - ONLY extract it if it is ACTUALLY MENTIONED in the response text. Do NOT extract it if it's not mentioned, even though we're tracking it.
 - **MULTILINGUAL**: The text can be in any language. Extract brands regardless of the language used.
 - For "name", use the brand name as it appears in the text (preserve original language):
   * If the mention refers to a standalone product/solution in a DIFFERENT category than the parent company, use the full product name.
     Example: "Google Trends" → extract "Google Trends" (not "Google")
     Example: "AWS" → extract "AWS" (not "Amazon")
   * If the mention refers to a product that is in the SAME category/strongly associated with the parent brand, use the parent company name.
-    Example: "Aeropress Coffee" → extract "Aeropress" (not "Aeropress Coffee")
+    Example: "{trackedBrand} Coffee" → extract "{trackedBrand}" (not "{trackedBrand} Coffee")
     Example: "iPhone" → extract "Apple" (not "iPhone")
 - For "domain", provide the primary international website domain for the brand or company (without https:// or www):
   * Example: "Apple" / "애플" / "Apple Inc." → "apple.com"
@@ -51,7 +52,10 @@ DO NOT extract:
 - Celebrities or individual people
 - Generic terms or product features
 
-IMPORTANT: DO extract "{trackedBrand}" if it appears in the response - this is critical for competitive analysis!
+IMPORTANT: 
+- DO extract "{trackedBrand}" ONLY if it is explicitly mentioned in the response text - this is critical for competitive analysis
+- DO NOT extract "{trackedBrand}" if it does not appear in the response text, even though it's the brand we're tracking
+- You must see the actual brand name in the text to extract it
 
 Additional guidelines:
 - Merge duplicate or variant mentions (including different language variants) into a single entry using the most canonical company name
@@ -142,7 +146,7 @@ export class BrandExtractorService {
         messages: [
           {
             role: 'system',
-            content: `You are a multilingual brand extraction expert specializing in competitive analysis. Your task is to identify "${context.trackedBrand}" (if mentioned) AND its competitor brands based on the query context. Extract brands and companies from text in any language (English, French, German, Spanish, etc.) accurately. Always return valid JSON. For domains, provide your best inference based on the brand name - use standard domain patterns. Do not invent random domains. Focus only on brands that compete in the same product category. CRITICAL: Always include "${context.trackedBrand}" if it appears in the response.`
+            content: `You are a multilingual brand extraction expert specializing in competitive analysis. Your task is to identify brands that are ACTUALLY MENTIONED in the response text. Extract brands and companies from text in any language (English, French, German, Spanish, etc.) accurately. Always return valid JSON. For domains, provide your best inference based on the brand name - use standard domain patterns. Do not invent random domains. Focus only on brands that compete in the same product category. CRITICAL: For "${context.trackedBrand}" - include it ONLY if you can see it explicitly mentioned in the response text. If "${context.trackedBrand}" does not appear in the text, do NOT extract it.`
           },
           {
             role: 'user',

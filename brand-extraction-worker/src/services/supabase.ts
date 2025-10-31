@@ -191,6 +191,7 @@ export async function getResultWithPromptData(
 /**
  * Normalize brand name locally (replaces DB call for performance)
  * This replicates the Postgres normalize_brand_name function logic
+ * NOTE: This keeps spaces - use normalizeBrandNameToSlug() for canonical_slug matching
  */
 export function normalizeBrandName(brandName: string): string {
   if (!brandName) {
@@ -210,6 +211,33 @@ export function normalizeBrandName(brandName: string): string {
   
   // Normalize multiple spaces to single space
   normalized = normalized.replace(/\s+/g, ' ');
+  
+  // Final trim
+  return normalized.trim();
+}
+
+/**
+ * Normalize brand name to slug (NO SPACES) - matches Postgres normalize_brand_name_to_slug()
+ * This is the CORRECT function to use for canonical brand lookups
+ * 
+ * CRITICAL: Must match the Postgres function exactly to prevent normalization mismatches
+ */
+export function normalizeBrandNameToSlug(brandName: string): string {
+  if (!brandName || brandName.trim() === '') {
+    return '';
+  }
+  
+  // Convert to lowercase and trim
+  let normalized = brandName.toLowerCase().trim();
+  
+  // Remove domain extensions
+  normalized = normalized.replace(/\.(com|io|co|org|net|ai|app|tech|shop)$/gi, '');
+  
+  // Remove common business suffixes (including sleep-related terms)
+  normalized = normalized.replace(/\s+(crm|software|platform|tool|app|inc|ltd|llc|corporation|corp|company|co|limited|mattress|bed|sleep system|pod)$/gi, '');
+  
+  // Remove special characters (keep only alphanumeric) - THIS REMOVES SPACES AND HYPHENS
+  normalized = normalized.replace(/[^a-z0-9]/g, '');
   
   // Final trim
   return normalized.trim();
@@ -252,6 +280,8 @@ export async function isOwnBrandFuzzyBatch(
  * Find or create canonical brands in batch
  * Calls the find_or_create_canonical_brands_batch Postgres function
  * Returns array of canonical brand IDs in the same order as input brands
+ * 
+ * FIXED: Now using correct slug normalization + Postgres has ON CONFLICT handling
  */
 export async function findOrCreateCanonicalBrandsBatch(
   client: SupabaseClient,
@@ -277,7 +307,6 @@ export async function findOrCreateCanonicalBrandsBatch(
   
   if (error) {
     console.error(`[Supabase] Failed to find/create canonical brands: ${error.message}`);
-    // Fallback: return null for all brands
     console.warn(`[Supabase] Using NULL canonical_brand_id fallback`);
     return brands.map(() => null as any);
   }
