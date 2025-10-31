@@ -46,6 +46,7 @@ interface BrandMentionInsert {
   ranking: number | null;
   sentiment: number | null;
   brand_website: string | null;
+  canonical_brand_id: string | null;
 }
 
 interface AnalyticsFactInsert {
@@ -64,6 +65,7 @@ interface AnalyticsFactInsert {
   brand_slug: string;
   brand_name: string;
   brand_website: string | null;
+  canonical_brand_id: string | null;
   is_own_brand: boolean;
   mention_count: number;
   ranking_position: number | null;
@@ -246,6 +248,48 @@ export async function isOwnBrandFuzzyBatch(
 }
 
 /**
+ * Find or create canonical brands in batch
+ * Calls the find_or_create_canonical_brands_batch Postgres function
+ * Returns array of canonical brand IDs in the same order as input brands
+ */
+export async function findOrCreateCanonicalBrandsBatch(
+  client: SupabaseClient,
+  brands: Array<{ name: string; domain: string | null; sentiment: number | null; ranking_position: number | null }>
+): Promise<string[]> {
+  if (!brands || brands.length === 0) {
+    return [];
+  }
+  
+  console.log(`[Supabase] Finding/creating ${brands.length} canonical brands...`);
+  
+  const brandsForRPC = brands.map(brand => ({
+    name: brand.name,
+    domain: brand.domain || null,
+    sentiment: brand.sentiment || null,
+    ranking_position: brand.ranking_position || null
+  }));
+  
+  const { data, error } = await client.rpc('find_or_create_canonical_brands_batch', {
+    p_brands: brandsForRPC
+  });
+  
+  if (error) {
+    console.error(`[Supabase] Failed to find/create canonical brands: ${error.message}`);
+    // Fallback: return null for all brands
+    console.warn(`[Supabase] Using NULL canonical_brand_id fallback`);
+    return brands.map(() => null as any);
+  }
+  
+  if (!data || !Array.isArray(data) || data.length !== brands.length) {
+    console.error(`[Supabase] Canonical brands batch mismatch: expected ${brands.length}, got ${data?.length || 0}`);
+    return brands.map(() => null as any);
+  }
+  
+  console.log(`[Supabase] ✅ Got ${data.length} canonical brand IDs`);
+  return data;
+}
+
+/**
  * Calculate own brand citations count
  */
 export function calculateOwnBrandCitations(
@@ -264,51 +308,12 @@ export function calculateOwnBrandCitations(
   }).length;
 }
 
-/**
- * Insert brand mentions directly (replacing trigger logic)
- */
-export async function insertBrandMentions(
-  client: SupabaseClient,
-  resultId: string,
-  brands: any[]
-): Promise<void> {
-  if (!brands || brands.length === 0) {
-    console.log(`[Supabase] No brands to insert for result ${resultId}`);
-    return;
-  }
-  
-  const mentions: BrandMentionInsert[] = brands
-    .filter(brand => brand.name && brand.name.trim())
-    .map(brand => ({
-      result_id: resultId,
-      brand_name: brand.name.trim(),
-      ranking: brand.ranking_position ? parseInt(brand.ranking_position) : null,
-      sentiment: brand.sentiment ? parseInt(brand.sentiment) : null,
-      brand_website: brand.domain && brand.domain.trim() ? brand.domain.trim() : null
-    }));
-  
-  if (mentions.length === 0) {
-    console.log(`[Supabase] No valid brands to insert for result ${resultId}`);
-    return;
-  }
-  
-  console.log(`[Supabase] Inserting ${mentions.length} brand mentions`);
-  
-  const { error } = await client
-    .from('brand_mentions')
-    .insert(mentions);
-    
-  if (error) {
-    throw new Error(`Failed to insert brand mentions: ${error.message}`);
-  }
-  
-  console.log(`[Supabase] ✅ Inserted ${mentions.length} brand mentions`);
-}
 
 /**
- * Insert analytics facts directly (replacing trigger logic)
- * OPTIMIZED: Uses local normalization + batch RPC for is_own_brand
+ * Insert analytics facts AND brand mentions directly (replacing trigger logic)
+ * OPTIMIZED: Uses local normalization + batch RPC for is_own_brand + canonical brands
  * Now tracks zero-brand results with placeholder row for analytics
+ * NEW: Integrates canonical_brands table via batch RPC
  */
 export async function insertAnalyticsFacts(
   client: SupabaseClient,
@@ -326,6 +331,7 @@ export async function insertAnalyticsFacts(
   const ownBrandCitations = calculateOwnBrandCitations(resultData.citations, websiteDomain);
   
   const facts: AnalyticsFactInsert[] = [];
+  const mentions: BrandMentionInsert[] = [];
   
   // Filter valid brands
   const validBrands = !brands ? [] : brands.filter(brand => brand.name && brand.name.trim());
@@ -352,6 +358,7 @@ export async function insertAnalyticsFacts(
         brand_slug: 'no_brands',
         brand_name: 'No Brands Found',
         brand_website: null,
+        canonical_brand_id: null, // No canonical brand for zero-brand case
         is_own_brand: false,
         mention_count: 0,
         ranking_position: null,
@@ -363,26 +370,44 @@ export async function insertAnalyticsFacts(
         checked_at: resultData.checked_at
       });
     }
+    // No brand_mentions to insert for zero-brand case
   } 
   // CASE 2: Brands found - Insert normal rows
   else {
-    const brandNames = validBrands.map(brand => brand.name.trim());
+    // ============================================
+    // STEP 1: Find or create canonical brands (BATCH)
+    // ============================================
+    const brandsForCanonical = validBrands.map(brand => ({
+      name: brand.name.trim(),
+      domain: brand.domain && brand.domain.trim() ? brand.domain.trim() : null,
+      sentiment: brand.sentiment ? parseFloat(brand.sentiment) : null,
+      ranking_position: brand.ranking_position ? parseInt(brand.ranking_position) : null
+    }));
     
-    // PERFORMANCE: Batch call for is_own_brand (1 DB call instead of N calls)
+    const canonicalBrandIds = await findOrCreateCanonicalBrandsBatch(client, brandsForCanonical);
+    
+    // ============================================
+    // STEP 2: Batch fuzzy matching for is_own_brand
+    // ============================================
+    const brandNames = validBrands.map(brand => brand.name.trim());
     console.log(`[Supabase] Checking ${brandNames.length} brands for is_own_brand...`);
     const isOwnBrandResults = await isOwnBrandFuzzyBatch(client, websiteId, brandNames);
     
-    // For each brand, create one row per tag
+    console.log(`[Supabase] ✅ is_own_brand batch check complete`);
+    
+    // ============================================
+    // STEP 3: Prepare analytics_facts and brand_mentions rows
+    // ============================================
     for (let i = 0; i < validBrands.length; i++) {
       const brand = validBrands[i];
       const brandName = brandNames[i];
+      const canonicalBrandId = canonicalBrandIds[i];
+      const isOwnBrand = isOwnBrandResults[i] || false;
       
       // PERFORMANCE: Use local normalization (no DB call)
       const brandSlug = normalizeBrandName(brandName);
       
-      // PERFORMANCE: Get result from batch call (already fetched)
-      const isOwnBrand = isOwnBrandResults[i] || false;
-      
+      // Create analytics_facts rows (one per tag)
       for (const tag of finalTags) {
         facts.push({
           website_id: websiteId,
@@ -397,9 +422,15 @@ export async function insertAnalyticsFacts(
           prompt_id: resultData.prompt_id,
           prompt_content: resultData.prompts.content,
           result_id: resultData.id,
+          
+          // NEW: canonical_brand_id
+          canonical_brand_id: canonicalBrandId,
+          
+          // Keep old fields for backwards compatibility
           brand_slug: brandSlug,
           brand_name: brandName,
           brand_website: brand.domain && brand.domain.trim() ? brand.domain.trim() : null,
+          
           is_own_brand: isOwnBrand,
           mention_count: 1,
           ranking_position: brand.ranking_position ? parseInt(brand.ranking_position) : null,
@@ -411,9 +442,24 @@ export async function insertAnalyticsFacts(
           checked_at: resultData.checked_at
         });
       }
+      
+      // Create brand_mentions row (one per brand, not per tag)
+      mentions.push({
+        result_id: resultData.id,
+        brand_name: brandName,
+        brand_website: brand.domain && brand.domain.trim() ? brand.domain.trim() : null,
+        ranking: brand.ranking_position ? parseInt(brand.ranking_position) : null,
+        sentiment: brand.sentiment ? parseInt(brand.sentiment) : null,
+        
+        // NEW: canonical_brand_id
+        canonical_brand_id: canonicalBrandId
+      });
     }
   }
   
+  // ============================================
+  // STEP 4: Insert into analytics_facts
+  // ============================================
   if (facts.length === 0) {
     console.log(`[Supabase] No analytics facts to insert (unexpected)`);
     return;
@@ -422,18 +468,35 @@ export async function insertAnalyticsFacts(
   console.log(`[Supabase] Inserting ${facts.length} analytics facts (${validBrands.length || 0} brands × ${finalTags.length} tags)`);
   
   // Use upsert with conflict resolution on (result_id, brand_slug, tag)
-  const { error } = await client
+  const { error: factsError } = await client
     .from('analytics_facts')
     .upsert(facts, {
       onConflict: 'result_id,brand_slug,tag',
       ignoreDuplicates: false
     });
     
-  if (error) {
-    throw new Error(`Failed to insert analytics facts: ${error.message}`);
+  if (factsError) {
+    throw new Error(`Failed to insert analytics facts: ${factsError.message}`);
   }
   
   console.log(`[Supabase] ✅ Inserted ${facts.length} analytics facts`);
+  
+  // ============================================
+  // STEP 5: Insert into brand_mentions
+  // ============================================
+  if (mentions.length > 0) {
+    console.log(`[Supabase] Inserting ${mentions.length} brand mentions`);
+    
+    const { error: mentionsError } = await client
+      .from('brand_mentions')
+      .insert(mentions);
+      
+    if (mentionsError) {
+      throw new Error(`Failed to insert brand mentions: ${mentionsError.message}`);
+    }
+    
+    console.log(`[Supabase] ✅ Inserted ${mentions.length} brand mentions`);
+  }
 }
 
 /**
@@ -485,6 +548,7 @@ export async function insertPromptCitations(
 /**
  * MAIN: Save all brand extraction data to related tables
  * This replaces the trigger-based logic with direct Railway inserts
+ * NOW: Includes canonical brands integration
  */
 export async function saveCompleteExtractionResult(
   client: SupabaseClient,
@@ -503,13 +567,12 @@ export async function saveCompleteExtractionResult(
     console.log(`[Supabase] Fetching result and prompt data...`);
     const resultData = await getResultWithPromptData(client, resultId);
     
-    // Step 3: Insert into brand_mentions (replaces sync_brand_mentions trigger)
-    await insertBrandMentions(client, resultId, brands);
-    
-    // Step 4: Insert into analytics_facts (replaces populate_analytics_facts trigger)
+    // Step 3: Insert into analytics_facts AND brand_mentions
+    // This now also handles canonical brands via batch RPC
+    // Replaces both sync_brand_mentions and populate_analytics_facts triggers
     await insertAnalyticsFacts(client, resultData, brands);
     
-    // Step 5: Insert into prompt_citations (replaces sync_prompt_citations trigger)
+    // Step 4: Insert into prompt_citations (replaces sync_prompt_citations trigger)
     await insertPromptCitations(client, resultId, resultData.citations);
     
     console.log(`[Supabase] ✅✅✅ Complete extraction save successful for ${resultId}`);
