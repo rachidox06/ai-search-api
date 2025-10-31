@@ -186,44 +186,63 @@ export async function getResultWithPromptData(
 }
 
 /**
- * Call normalize_brand_name Postgres function
+ * Normalize brand name locally (replaces DB call for performance)
+ * This replicates the Postgres normalize_brand_name function logic
  */
-export async function normalizeBrandName(
-  client: SupabaseClient,
-  brandName: string
-): Promise<string> {
-  const { data, error } = await client.rpc('normalize_brand_name', {
-    brand_name: brandName
-  });
-  
-  if (error) {
-    console.warn(`[Supabase] Failed to normalize brand name "${brandName}": ${error.message}`);
-    // Fallback to simple normalization
-    return brandName.toLowerCase().trim();
+export function normalizeBrandName(brandName: string): string {
+  if (!brandName) {
+    return '';
   }
   
-  return data || brandName.toLowerCase().trim();
+  let normalized = brandName.toLowerCase().trim();
+  
+  // Remove domain extensions (.com, .io, .co, etc.)
+  normalized = normalized.replace(/\.(com|io|co|org|net|ai|app|tech)$/gi, '');
+  
+  // Remove common business suffixes
+  normalized = normalized.replace(/\s+(crm|software|platform|tool|app|inc|ltd|llc|corporation|corp|company|co|limited)$/gi, '');
+  
+  // Remove special characters (keep alphanumeric and spaces)
+  normalized = normalized.replace(/[^a-z0-9\s]/g, '');
+  
+  // Normalize multiple spaces to single space
+  normalized = normalized.replace(/\s+/g, ' ');
+  
+  // Final trim
+  return normalized.trim();
 }
 
 /**
- * Call is_own_brand_fuzzy Postgres function
+ * Call is_own_brand_fuzzy_batch Postgres function for multiple brands
+ * Much faster than calling is_own_brand_fuzzy once per brand
  */
-export async function isOwnBrandFuzzy(
+export async function isOwnBrandFuzzyBatch(
   client: SupabaseClient,
   websiteId: string,
-  brandName: string
-): Promise<boolean> {
-  const { data, error } = await client.rpc('is_own_brand_fuzzy', {
+  brandNames: string[]
+): Promise<boolean[]> {
+  if (!brandNames || brandNames.length === 0) {
+    return [];
+  }
+  
+  const { data, error } = await client.rpc('is_own_brand_fuzzy_batch', {
     p_website_id: websiteId,
-    brand_name_input: brandName
+    brand_names_input: brandNames
   });
   
   if (error) {
-    console.warn(`[Supabase] Failed to check is_own_brand for "${brandName}": ${error.message}`);
-    return false;
+    console.warn(`[Supabase] Failed to check is_own_brand_batch: ${error.message}`);
+    // Fallback: all false
+    return brandNames.map(() => false);
   }
   
-  return data || false;
+  // Data is an array of {brand_name, is_own} objects
+  // Map to just the is_own boolean values in same order
+  if (!data || !Array.isArray(data)) {
+    return brandNames.map(() => false);
+  }
+  
+  return data.map((row: any) => row.is_own === true);
 }
 
 /**
@@ -288,6 +307,7 @@ export async function insertBrandMentions(
 
 /**
  * Insert analytics facts directly (replacing trigger logic)
+ * OPTIMIZED: Uses local normalization + batch RPC for is_own_brand
  */
 export async function insertAnalyticsFacts(
   client: SupabaseClient,
@@ -308,15 +328,31 @@ export async function insertAnalyticsFacts(
   const date = new Date(resultData.checked_at).toISOString().split('T')[0];
   const ownBrandCitations = calculateOwnBrandCitations(resultData.citations, websiteDomain);
   
+  // Filter valid brands first
+  const validBrands = brands.filter(brand => brand.name && brand.name.trim());
+  const brandNames = validBrands.map(brand => brand.name.trim());
+  
+  if (validBrands.length === 0) {
+    console.log(`[Supabase] No valid brands for analytics facts`);
+    return;
+  }
+  
+  // PERFORMANCE: Batch call for is_own_brand (1 DB call instead of N calls)
+  console.log(`[Supabase] Checking ${brandNames.length} brands for is_own_brand...`);
+  const isOwnBrandResults = await isOwnBrandFuzzyBatch(client, websiteId, brandNames);
+  
   const facts: AnalyticsFactInsert[] = [];
   
   // For each brand, create one row per tag
-  for (const brand of brands) {
-    if (!brand.name || !brand.name.trim()) continue;
+  for (let i = 0; i < validBrands.length; i++) {
+    const brand = validBrands[i];
+    const brandName = brandNames[i];
     
-    const brandName = brand.name.trim();
-    const brandSlug = await normalizeBrandName(client, brandName);
-    const isOwnBrand = await isOwnBrandFuzzy(client, websiteId, brandName);
+    // PERFORMANCE: Use local normalization (no DB call)
+    const brandSlug = normalizeBrandName(brandName);
+    
+    // PERFORMANCE: Get result from batch call (already fetched)
+    const isOwnBrand = isOwnBrandResults[i] || false;
     
     for (const tag of finalTags) {
       facts.push({
@@ -353,7 +389,7 @@ export async function insertAnalyticsFacts(
     return;
   }
   
-  console.log(`[Supabase] Inserting ${facts.length} analytics facts (${brands.length} brands × ${finalTags.length} tags)`);
+  console.log(`[Supabase] Inserting ${facts.length} analytics facts (${validBrands.length} brands × ${finalTags.length} tags)`);
   
   // Use upsert with conflict resolution on (result_id, brand_slug, tag)
   const { error } = await client
