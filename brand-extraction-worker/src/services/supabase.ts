@@ -308,17 +308,14 @@ export async function insertBrandMentions(
 /**
  * Insert analytics facts directly (replacing trigger logic)
  * OPTIMIZED: Uses local normalization + batch RPC for is_own_brand
+ * Now tracks zero-brand results with placeholder row for analytics
  */
 export async function insertAnalyticsFacts(
   client: SupabaseClient,
   resultData: ResultWithPromptData,
   brands: any[]
 ): Promise<void> {
-  if (!brands || brands.length === 0) {
-    console.log(`[Supabase] No brands for analytics facts`);
-    return;
-  }
-  
+  // Common setup for all cases
   const websiteId = resultData.prompts.websites.id;
   const websiteDomain = resultData.prompts.websites.domain;
   const tags = resultData.prompts.tag || [];
@@ -328,32 +325,16 @@ export async function insertAnalyticsFacts(
   const date = new Date(resultData.checked_at).toISOString().split('T')[0];
   const ownBrandCitations = calculateOwnBrandCitations(resultData.citations, websiteDomain);
   
-  // Filter valid brands first
-  const validBrands = brands.filter(brand => brand.name && brand.name.trim());
-  const brandNames = validBrands.map(brand => brand.name.trim());
-  
-  if (validBrands.length === 0) {
-    console.log(`[Supabase] No valid brands for analytics facts`);
-    return;
-  }
-  
-  // PERFORMANCE: Batch call for is_own_brand (1 DB call instead of N calls)
-  console.log(`[Supabase] Checking ${brandNames.length} brands for is_own_brand...`);
-  const isOwnBrandResults = await isOwnBrandFuzzyBatch(client, websiteId, brandNames);
-  
   const facts: AnalyticsFactInsert[] = [];
   
-  // For each brand, create one row per tag
-  for (let i = 0; i < validBrands.length; i++) {
-    const brand = validBrands[i];
-    const brandName = brandNames[i];
+  // Filter valid brands
+  const validBrands = !brands ? [] : brands.filter(brand => brand.name && brand.name.trim());
+  
+  // CASE 1: No brands found - Insert placeholder row(s) for tracking
+  if (validBrands.length === 0) {
+    console.log(`[Supabase] No brands found - inserting placeholder for zero-brand tracking`);
     
-    // PERFORMANCE: Use local normalization (no DB call)
-    const brandSlug = normalizeBrandName(brandName);
-    
-    // PERFORMANCE: Get result from batch call (already fetched)
-    const isOwnBrand = isOwnBrandResults[i] || false;
-    
+    // Insert one row per tag to track zero-brand results
     for (const tag of finalTags) {
       facts.push({
         website_id: websiteId,
@@ -368,13 +349,13 @@ export async function insertAnalyticsFacts(
         prompt_id: resultData.prompt_id,
         prompt_content: resultData.prompts.content,
         result_id: resultData.id,
-        brand_slug: brandSlug,
-        brand_name: brandName,
-        brand_website: brand.domain && brand.domain.trim() ? brand.domain.trim() : null,
-        is_own_brand: isOwnBrand,
-        mention_count: 1,
-        ranking_position: brand.ranking_position ? parseInt(brand.ranking_position) : null,
-        sentiment_score: brand.sentiment ? parseFloat(brand.sentiment) : null,
+        brand_slug: 'no_brands',
+        brand_name: 'No Brands Found',
+        brand_website: null,
+        is_own_brand: false,
+        mention_count: 0,
+        ranking_position: null,
+        sentiment_score: null,
         total_citations: resultData.total_citations || 0,
         own_brand_citations: ownBrandCitations,
         response_length: resultData.answer_length,
@@ -382,14 +363,63 @@ export async function insertAnalyticsFacts(
         checked_at: resultData.checked_at
       });
     }
+  } 
+  // CASE 2: Brands found - Insert normal rows
+  else {
+    const brandNames = validBrands.map(brand => brand.name.trim());
+    
+    // PERFORMANCE: Batch call for is_own_brand (1 DB call instead of N calls)
+    console.log(`[Supabase] Checking ${brandNames.length} brands for is_own_brand...`);
+    const isOwnBrandResults = await isOwnBrandFuzzyBatch(client, websiteId, brandNames);
+    
+    // For each brand, create one row per tag
+    for (let i = 0; i < validBrands.length; i++) {
+      const brand = validBrands[i];
+      const brandName = brandNames[i];
+      
+      // PERFORMANCE: Use local normalization (no DB call)
+      const brandSlug = normalizeBrandName(brandName);
+      
+      // PERFORMANCE: Get result from batch call (already fetched)
+      const isOwnBrand = isOwnBrandResults[i] || false;
+      
+      for (const tag of finalTags) {
+        facts.push({
+          website_id: websiteId,
+          date,
+          engine: resultData.engine,
+          tag: tag,
+          location: resultData.prompts.location || 'United States',
+          language: resultData.prompts.language || 'en',
+          device: resultData.prompts.device || 'desktop',
+          model: resultData.model,
+          prompt_source: resultData.prompts.source || 'user_added',
+          prompt_id: resultData.prompt_id,
+          prompt_content: resultData.prompts.content,
+          result_id: resultData.id,
+          brand_slug: brandSlug,
+          brand_name: brandName,
+          brand_website: brand.domain && brand.domain.trim() ? brand.domain.trim() : null,
+          is_own_brand: isOwnBrand,
+          mention_count: 1,
+          ranking_position: brand.ranking_position ? parseInt(brand.ranking_position) : null,
+          sentiment_score: brand.sentiment ? parseFloat(brand.sentiment) : null,
+          total_citations: resultData.total_citations || 0,
+          own_brand_citations: ownBrandCitations,
+          response_length: resultData.answer_length,
+          has_answer: (resultData.answer_length || 0) > 0,
+          checked_at: resultData.checked_at
+        });
+      }
+    }
   }
   
   if (facts.length === 0) {
-    console.log(`[Supabase] No analytics facts to insert`);
+    console.log(`[Supabase] No analytics facts to insert (unexpected)`);
     return;
   }
   
-  console.log(`[Supabase] Inserting ${facts.length} analytics facts (${validBrands.length} brands × ${finalTags.length} tags)`);
+  console.log(`[Supabase] Inserting ${facts.length} analytics facts (${validBrands.length || 0} brands × ${finalTags.length} tags)`);
   
   // Use upsert with conflict resolution on (result_id, brand_slug, tag)
   const { error } = await client
