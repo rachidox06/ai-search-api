@@ -10,7 +10,7 @@ Context:
 - Query/Prompt: "{promptContent}"
 - Tracked Brand: "{trackedBrand}"
 
-Task: Extract COMPETITOR brands that are mentioned as alternatives or competitors to "{trackedBrand}" in the response below.
+Task: Extract ALL brands mentioned in the response that are relevant to "{trackedBrand}", including "{trackedBrand}" itself if mentioned, and its competitors/alternatives.
 
 Return ONLY a JSON array of objects (no prose, no code fences). Each object must follow this schema exactly:
 
@@ -24,7 +24,8 @@ Return ONLY a JSON array of objects (no prose, no code fences). Each object must
 ]
 
 Rules - ONLY extract brands that meet ALL these criteria:
-- **COMPETITORS ONLY**: Extract brands that are in the SAME product category as "{trackedBrand}" and could be considered alternatives or competitors by consumers
+- **SAME CATEGORY**: Extract brands that are in the SAME product category as "{trackedBrand}", including "{trackedBrand}" itself if mentioned
+- **IMPORTANT**: If "{trackedBrand}" is mentioned in the response, you MUST extract it along with competitors
 - **MULTILINGUAL**: The text can be in any language. Extract brands regardless of the language used.
 - For "name", use the brand name as it appears in the text (preserve original language):
   * If the mention refers to a standalone product/solution in a DIFFERENT category than the parent company, use the full product name.
@@ -41,7 +42,6 @@ Rules - ONLY extract brands that meet ALL these criteria:
   * Do not invent random or fake-sounding domains - use logical, standard domain patterns
 
 DO NOT extract:
-- The tracked brand itself ("{trackedBrand}") - we already know about it
 - Government agencies (e.g., FDA, FTC, EPA, Consumer Product Safety Commission, etc.)
 - Review/comparison sites (e.g., Wirecutter, CNET, Consumer Reports, PCMag, TechRadar, etc.)
 - Retail aggregators (e.g., Amazon, eBay, Walmart, Target, Best Buy, Costco, Alibaba, etc.)
@@ -50,6 +50,8 @@ DO NOT extract:
 - Media outlets or publishers (unless they sell products directly)
 - Celebrities or individual people
 - Generic terms or product features
+
+IMPORTANT: DO extract "{trackedBrand}" if it appears in the response - this is critical for competitive analysis!
 
 Additional guidelines:
 - Merge duplicate or variant mentions (including different language variants) into a single entry using the most canonical company name
@@ -140,7 +142,7 @@ export class BrandExtractorService {
         messages: [
           {
             role: 'system',
-            content: `You are a multilingual competitor brand extraction expert. Your task is to identify competitor brands that are alternatives to "${context.trackedBrand}" based on the query context. Extract brands and companies from text in any language (English, French, German, Spanish, etc.) accurately. Always return valid JSON. For domains, provide your best inference based on the brand name - use standard domain patterns. Do not invent random domains. Focus only on brands that compete in the same product category.`
+            content: `You are a multilingual brand extraction expert specializing in competitive analysis. Your task is to identify "${context.trackedBrand}" (if mentioned) AND its competitor brands based on the query context. Extract brands and companies from text in any language (English, French, German, Spanish, etc.) accurately. Always return valid JSON. For domains, provide your best inference based on the brand name - use standard domain patterns. Do not invent random domains. Focus only on brands that compete in the same product category. CRITICAL: Always include "${context.trackedBrand}" if it appears in the response.`
           },
           {
             role: 'user',
