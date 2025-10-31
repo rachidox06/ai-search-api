@@ -13,7 +13,7 @@ Return ONLY a JSON array of objects (no prose, no code fences). Each object must
 [
   {
     "name": "Company or brand name (not product name) - in the original language from the text",
-    "domain": "Primary domain name for this brand or company (e.g., apple.com, hubspot.com) OR null if you are not absolutely certain",
+    "domain": "Primary domain name for this brand or company (e.g., apple.com, hubspot.com) OR null if unknown",
     "sentiment": 0-100 integer score reflecting how positively the brand is portrayed (0 = very negative, 50 = neutral, 100 = very positive),
     "ranking_position": integer representing the 1-based order of appearance of the brand in the answer text (first occurrence = 1)
   }
@@ -28,19 +28,21 @@ Rules:
   * If the mention refers to a product that is in the SAME category/strongly associated with the parent brand, use the parent company name.
     Example: "Aeropress Coffee" → extract "Aeropress" (not "Aeropress Coffee")
     Example: "iPhone" → extract "Apple" (not "iPhone")
-- **CRITICAL - For "domain":**
-  * ONLY provide a domain if you are ABSOLUTELY CERTAIN it is the correct, official primary website for this brand
-  * Return null if you have ANY doubt about the exact domain name
-  * **DO NOT GUESS, INVENT, or MAKE UP domains** - accuracy is more important than completeness
-  * Only use domains you are 100% confident about (e.g., well-known global brands)
-  * Provide the domain without https:// or www prefix
+- For "domain", provide the primary international website domain for the brand or company (without https:// or www):
+  * Example: "Apple" / "애플" / "Apple Inc." → "apple.com"
+  * Example: "HubSpot" → "hubspot.com"
+  * Example: "Carrefour" → "carrefour.com"
+  * Example: "Deutsche Bank" → "db.com"
+  * If you know the brand but are unsure of the exact domain, provide your best inference based on the brand name
+  * Only use null if the brand is completely unknown or impossible to infer a domain for
+  * Do not invent random or fake-sounding domains - use logical, standard domain patterns
 - **Do NOT extract celebrities or individual people - only extract actual companies and brands.**
 - Merge duplicate or variant mentions (including different language variants) into a single entry using the most canonical company name.
 - Estimate sentiment from the surrounding context in the text's language; use 50 if tone is neutral or ambiguous.
 - "ranking_position" must reflect the first mention order within the text.
 - Exclude generic terms, product categories, and people.
 - Exclude huge aggregators like Amazon, Best Buy, Walmart, etc. because they are only destinations to buy products, not brands.
-- **REMEMBER: It is better to return null for domain than to provide an incorrect or guessed domain.**
+
 
 Text:
 {text}
@@ -117,14 +119,14 @@ export class BrandExtractorService {
         messages: [
           {
             role: 'system',
-            content: 'You are a multilingual brand extraction expert. Extract brands and companies from text in any language (English, French, German, Spanish, etc.) accurately. Always return valid JSON. For domains, ONLY provide values you are absolutely certain about - return null if uncertain. Never guess or invent domains.'
+            content: 'You are a multilingual brand extraction expert. Extract brands and companies from text in any language (English, French, German, Spanish, etc.) accurately. Always return valid JSON. For domains, provide your best inference based on the brand name - use standard domain patterns. Do not invent random domains.'
           },
           {
             role: 'user',
             content: prompt
           }
         ],
-        temperature: 0.0,
+        temperature: config.openai.temperature,
         max_tokens: config.openai.maxTokens,
       });
       
