@@ -23,7 +23,7 @@ export const config = {
   openai: {
     apiKey: process.env.OPENAI_API_KEY!,
     model: 'gpt-4o-mini',
-    temperature: 0.3,
+    temperature: 0.0,  // Set to 0 for deterministic, factual responses (no creativity)
     maxTokens: 2000,
   },
   

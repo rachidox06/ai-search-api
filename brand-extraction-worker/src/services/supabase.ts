@@ -46,6 +46,7 @@ interface BrandMentionInsert {
   ranking: number | null;
   sentiment: number | null;
   brand_website: string | null;
+  domain_verified: boolean;
   canonical_brand_id: string | null;
 }
 
@@ -254,7 +255,7 @@ export async function isOwnBrandFuzzyBatch(
  */
 export async function findOrCreateCanonicalBrandsBatch(
   client: SupabaseClient,
-  brands: Array<{ name: string; domain: string | null; sentiment: number | null; ranking_position: number | null }>
+  brands: Array<{ name: string; domain: string | null; domain_verified: boolean; sentiment: number | null; ranking_position: number | null }>
 ): Promise<string[]> {
   if (!brands || brands.length === 0) {
     return [];
@@ -265,6 +266,7 @@ export async function findOrCreateCanonicalBrandsBatch(
   const brandsForRPC = brands.map(brand => ({
     name: brand.name,
     domain: brand.domain || null,
+    domain_verified: brand.domain_verified || false,
     sentiment: brand.sentiment || null,
     ranking_position: brand.ranking_position || null
   }));
@@ -380,6 +382,7 @@ export async function insertAnalyticsFacts(
     const brandsForCanonical = validBrands.map(brand => ({
       name: brand.name.trim(),
       domain: brand.domain && brand.domain.trim() ? brand.domain.trim() : null,
+      domain_verified: brand.domain_verified || false,
       sentiment: brand.sentiment ? parseFloat(brand.sentiment) : null,
       ranking_position: brand.ranking_position ? parseInt(brand.ranking_position) : null
     }));
@@ -448,6 +451,7 @@ export async function insertAnalyticsFacts(
         result_id: resultData.id,
         brand_name: brandName,
         brand_website: brand.domain && brand.domain.trim() ? brand.domain.trim() : null,
+        domain_verified: brand.domain_verified || false,
         ranking: brand.ranking_position ? parseInt(brand.ranking_position) : null,
         sentiment: brand.sentiment ? parseInt(brand.sentiment) : null,
         

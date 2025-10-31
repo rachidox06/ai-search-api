@@ -7,7 +7,8 @@ export interface BrandExtractionJob {
 
 export interface ExtractedBrand {
   name: string;
-  domain: string;             // Primary domain for the brand
+  domain: string | null;      // Primary domain for the brand (null if uncertain)
+  domain_verified: boolean;   // Whether domain passed DNS verification
   sentiment: number;          // 0-100
   ranking_position: number;   // Order of appearance
 }
