@@ -6,7 +6,11 @@ import dns from 'dns/promises';
 const openai = new OpenAI({ apiKey: config.openai.apiKey });
 
 const BRAND_EXTRACTION_PROMPT = `
-Extract every distinct brand or company referenced in the following text. The text may be in any language (English, French, German, Spanish, etc.).
+Context:
+- Query/Prompt: "{promptContent}"
+- Tracked Brand: "{trackedBrand}"
+
+Task: Extract COMPETITOR brands that are mentioned as alternatives or competitors to "{trackedBrand}" in the response below.
 
 Return ONLY a JSON array of objects (no prose, no code fences). Each object must follow this schema exactly:
 
@@ -19,7 +23,8 @@ Return ONLY a JSON array of objects (no prose, no code fences). Each object must
   }
 ]
 
-Rules:
+Rules - ONLY extract brands that meet ALL these criteria:
+- **COMPETITORS ONLY**: Extract brands that are in the SAME product category as "{trackedBrand}" and could be considered alternatives or competitors by consumers
 - **MULTILINGUAL**: The text can be in any language. Extract brands regardless of the language used.
 - For "name", use the brand name as it appears in the text (preserve original language):
   * If the mention refers to a standalone product/solution in a DIFFERENT category than the parent company, use the full product name.
@@ -31,20 +36,27 @@ Rules:
 - For "domain", provide the primary international website domain for the brand or company (without https:// or www):
   * Example: "Apple" / "애플" / "Apple Inc." → "apple.com"
   * Example: "HubSpot" → "hubspot.com"
-  * Example: "Carrefour" → "carrefour.com"
-  * Example: "Deutsche Bank" → "db.com"
   * If you know the brand but are unsure of the exact domain, provide your best inference based on the brand name
   * Only use null if the brand is completely unknown or impossible to infer a domain for
   * Do not invent random or fake-sounding domains - use logical, standard domain patterns
-- **Do NOT extract celebrities or individual people - only extract actual companies and brands.**
-- Merge duplicate or variant mentions (including different language variants) into a single entry using the most canonical company name.
-- Estimate sentiment from the surrounding context in the text's language; use 50 if tone is neutral or ambiguous.
-- "ranking_position" must reflect the first mention order within the text.
-- Exclude generic terms, product categories, and people.
-- Exclude huge aggregators like Amazon, Best Buy, Walmart, etc. because they are only destinations to buy products, not brands.
 
+DO NOT extract:
+- The tracked brand itself ("{trackedBrand}") - we already know about it
+- Government agencies (e.g., FDA, FTC, EPA, Consumer Product Safety Commission, etc.)
+- Review/comparison sites (e.g., Wirecutter, CNET, Consumer Reports, PCMag, TechRadar, etc.)
+- Retail aggregators (e.g., Amazon, eBay, Walmart, Target, Best Buy, Costco, Alibaba, etc.)
+- Generic product categories or descriptive terms (e.g., "memory foam mattresses", "portable coffee makers", "wireless earbuds")
+- Non-commercial organizations (foundations, associations, advocacy groups)
+- Media outlets or publishers (unless they sell products directly)
+- Celebrities or individual people
+- Generic terms or product features
 
-Text:
+Additional guidelines:
+- Merge duplicate or variant mentions (including different language variants) into a single entry using the most canonical company name
+- Estimate sentiment from the surrounding context in the text's language; use 50 if tone is neutral or ambiguous
+- "ranking_position" must reflect the first mention order within the text
+
+Response text to analyze:
 {text}
 `;
 
@@ -103,7 +115,13 @@ export class BrandExtractorService {
     return Promise.all(verificationPromises);
   }
 
-  async extractBrands(text: string): Promise<{
+  async extractBrands(
+    text: string,
+    context: {
+      trackedBrand: string;
+      promptContent: string;
+    }
+  ): Promise<{
     brands: ExtractedBrand[];
     cost: number;
     tokensUsed: number;
@@ -112,14 +130,17 @@ export class BrandExtractorService {
     const startTime = Date.now();
     
     try {
-      const prompt = BRAND_EXTRACTION_PROMPT.replace('{text}', text);
+      const prompt = BRAND_EXTRACTION_PROMPT
+        .replace('{text}', text)
+        .replace(/{trackedBrand}/g, context.trackedBrand)
+        .replace(/{promptContent}/g, context.promptContent);
       
       const response = await openai.chat.completions.create({
         model: config.openai.model,
         messages: [
           {
             role: 'system',
-            content: 'You are a multilingual brand extraction expert. Extract brands and companies from text in any language (English, French, German, Spanish, etc.) accurately. Always return valid JSON. For domains, provide your best inference based on the brand name - use standard domain patterns. Do not invent random domains.'
+            content: `You are a multilingual competitor brand extraction expert. Your task is to identify competitor brands that are alternatives to "${context.trackedBrand}" based on the query context. Extract brands and companies from text in any language (English, French, German, Spanish, etc.) accurately. Always return valid JSON. For domains, provide your best inference based on the brand name - use standard domain patterns. Do not invent random domains. Focus only on brands that compete in the same product category.`
           },
           {
             role: 'user',

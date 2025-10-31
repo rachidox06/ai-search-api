@@ -29,8 +29,35 @@ export async function processBrandExtraction(job: Job<BrandExtractionJob>): Prom
   const supabaseClient = createSupabaseClient();
   
   try {
-    // Extract brands using OpenAI
-    const extraction = await brandExtractor.extractBrands(answerText);
+    // Fetch context: prompt content and website brand name
+    const { data: resultData, error: fetchError } = await supabaseClient
+      .from('prompt_tracking_results')
+      .select(`
+        prompts!inner (
+          content,
+          websites!inner (
+            brand_name
+          )
+        )
+      `)
+      .eq('id', resultId)
+      .single();
+    
+    if (fetchError || !resultData) {
+      console.error(`[Processor] Failed to fetch context for ${resultId}:`, fetchError?.message);
+      throw new Error(`Failed to fetch prompt context: ${fetchError?.message}`);
+    }
+    
+    const promptContent = (resultData.prompts as any)?.content || '';
+    const trackedBrand = (resultData.prompts as any)?.websites?.brand_name || 'Unknown Brand';
+    
+    console.log(`[Processor] Context - Tracked Brand: "${trackedBrand}", Prompt: "${promptContent.substring(0, 100)}..."`);
+    
+    // Extract brands using OpenAI with context
+    const extraction = await brandExtractor.extractBrands(answerText, {
+      trackedBrand,
+      promptContent
+    });
     
     console.log(`[Processor] ✅ Extracted ${extraction.brands.length} brands`);
     console.log(`[Processor] Cost: $${extraction.cost.toFixed(6)}`);
